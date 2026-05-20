@@ -97,10 +97,10 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
     results = auto.run(rows=rows, module=module, name=task_name, force=False)
 
     module.load.assert_called_once_with(str(model_path))
-    assert results.get("loaded_from") == str(model_path)
-    assert results.get("baseline") is None
-    assert results.get("optimized") is None
-    assert results.get("improvement") is None
+    assert results.loaded_from == str(model_path)
+    assert results.baseline is None
+    assert results.optimized is None
+    assert results.improvement is None
 
 
 def test_run_force_retrains(tmp_path: Path) -> None:
