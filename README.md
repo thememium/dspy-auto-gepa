@@ -16,7 +16,7 @@ pip install dspy-auto-gepa
 
 ```python
 import dspy
-from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
+from dspy_auto_gepa import AutoGEPA
 
 class TicketSignature(dspy.Signature):
     """Classify support tickets."""
@@ -45,14 +45,12 @@ reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
 dspy.configure(lm=metric_lm)
 
 auto = AutoGEPA(
-    AutoGEPAConfig(
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
-        split=(0.7, 0.2, 0.1),
-        gepa_auto="light",
-        metric_lm=metric_lm,
-        reflection_lm=reflection_lm,
-    )
+    input_fields=["message"],
+    output_fields=["urgency", "sentiment"],
+    split=(0.7, 0.2, 0.1),
+    gepa_auto="light",
+    metric_lm=metric_lm,
+    reflection_lm=reflection_lm,
 )
 
 prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
@@ -77,9 +75,16 @@ auto.promote(
 
 ## API
 
-- `AutoGEPAConfig` — task settings, split, models, artifact directory
-  - `metric_lm: dspy.LM` — model used to generate the metric file
-  - `reflection_lm: dspy.LM` — model used by GEPA for reflective optimization
+- `AutoGEPA(...)` — all configuration fields accepted directly in the constructor:
+  - `input_fields: list[str]` — required
+  - `output_fields: list[str]` — required
+  - `split: tuple[float, ...] = (0.7, 0.2, 0.1)`
+  - `seed: int = 42`
+  - `artifact_dir: Path | str = ".auto_gepa"`
+  - `metric_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/openai/gpt-oss-120b")`
+  - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
+  - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
+  - `num_threads: int = 16`
 - `AutoGEPA.prepare(rows, module, name=None, force=False)` → `PreparedRun`
   - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`. Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
   - `force=True` overwrites an existing metric file
