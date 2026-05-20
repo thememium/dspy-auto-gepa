@@ -68,7 +68,7 @@ def generate_metric_file(
     out_path: Path,
     metric_lm: dspy.LM | None = None,
 ) -> Path:
-    generator = dspy.ChainOfThought(MetricSpecGenerator)
+    generator = dspy.RLM(MetricSpecGenerator)
 
     if metric_lm is not None:
         generator.set_lm(metric_lm)
