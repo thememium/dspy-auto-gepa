@@ -68,6 +68,24 @@ def test_flat_autogepa_constructor():
     assert auto.config.gepa_auto == "medium"
     assert auto.config.num_threads == 4
     assert auto.config.artifact_dir.exists()
+    assert auto.rows is None
+    assert auto.module is None
+    assert auto.name is None
+
+
+def test_autogepa_stores_rows_module_name():
+    module = DummyModule()
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="TestTask",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+    )
+    assert auto.rows is rows
+    assert auto.module is module
+    assert auto.name == "TestTask"
 
 
 def test_run_loads_existing_model(tmp_path: Path) -> None:
@@ -84,17 +102,20 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
     model_path = run_dir / f"optimized_{task_name}.json"
     model_path.write_text('{"version": "1.0"}')
 
+    module = DummyModule()
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+
     auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name=task_name,
         input_fields=["message"],
         output_fields=["urgency", "sentiment"],
         artifact_dir=artifact_dir,
     )
 
-    module = DummyModule()
-    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
-
     with patch.object(module, "load") as mock_load:
-        results = auto.run(rows=rows, module=module, name=task_name, force=False)
+        results = auto.run(force=False)
 
         mock_load.assert_called_once_with(str(model_path))
     assert results.loaded_from == str(model_path)
@@ -117,20 +138,23 @@ def test_run_force_retrains(tmp_path: Path) -> None:
     model_path = run_dir / f"optimized_{task_name}.json"
     model_path.write_text('{"version": "1.0"}')
 
+    module = DummyModule()
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+
     auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name=task_name,
         input_fields=["message"],
         output_fields=["urgency", "sentiment"],
         artifact_dir=artifact_dir,
     )
 
-    module = DummyModule()
-    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
-
     # force=True should bypass the load and attempt training
     # Since we don't have a real LLM, this will fail at train()
     # but it proves the force flag works to skip loading
     with pytest.raises(Exception):
-        auto.run(rows=rows, module=module, name=task_name, force=True)
+        auto.run(force=True)
 
 
 def test_to_examples():
