@@ -31,7 +31,11 @@ rows = [
 
 
 def main() -> None:
-    lm = dspy.LM("openrouter/openai/gpt-oss-120b", cache=False)
+    lm = dspy.LM(
+        "openrouter/openai/gpt-oss-120b",
+        extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
+    )
+
     dspy.configure(lm=lm)
 
     auto = AutoGEPA(
