@@ -18,6 +18,8 @@ class AutoGEPA:
         *,
         rows: list[dict[str, Any]],
         module: dspy.Module,
+        metric_name: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         examples = to_examples(
             rows,
@@ -31,7 +33,16 @@ class AutoGEPA:
             self.config.seed,
         )
 
-        metric_path = self.config.artifact_dir / "metric.py"
+        if metric_name:
+            metric_path = self.config.artifact_dir / metric_name
+        else:
+            metric_path = self.config.artifact_dir / "metric.py"
+
+        if metric_path.exists() and not force:
+            raise FileExistsError(
+                f"Metric file already exists: {metric_path}. "
+                "Use metric_name='...' or force=True to overwrite."
+            )
 
         generate_metric_file(
             input_fields=self.config.input_fields,

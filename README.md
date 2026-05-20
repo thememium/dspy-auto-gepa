@@ -87,7 +87,9 @@ auto.promote(optimized_module=optimized, destination="optimized_ticket_classifie
 ## API
 
 - `AutoGEPAConfig` — task settings, split, models, artifact directory
-- `AutoGEPA.prepare(rows, module)` → train/val/test + generated metric file
+- `AutoGEPA.prepare(rows, module, metric_name=None, force=False)` → train/val/test + generated metric file
+  - `metric_name` overrides the default `metric.py` filename
+  - `force=True` overwrites an existing metric file
 - `AutoGEPA.run_baseline(module, testset, metric)` → baseline scores
 - `AutoGEPA.train(module, trainset, valset, metric)` → optimized module
 - `AutoGEPA.compare(baseline_module, optimized_module, testset, metric)` → side-by-side scores
