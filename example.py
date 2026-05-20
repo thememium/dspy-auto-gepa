@@ -31,7 +31,7 @@ rows = [
 # fmt: on
 
 
-def main(force: bool = False) -> None:
+def main() -> None:
     metric_lm = dspy.LM(
         "openrouter/openai/gpt-oss-120b",
         extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
@@ -52,6 +52,15 @@ def main(force: bool = False) -> None:
         reflection_lm=teacher_lm,
     )
 
+    model_path = (
+        auto.config.artifact_dir / "TicketSignature" / "optimized_TicketSignature.json"
+    )
+
+    force = False
+    if model_path.exists():
+        response = input(f"Model found at {model_path}. Run GEPA again? (y/N): ")
+        force = response.strip().lower() == "y"
+
     results = auto.run(rows=rows, module=program, name="TicketSignature", force=force)
 
     if results.loaded_from:
@@ -65,7 +74,4 @@ def main(force: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    import sys
-
-    force = "--force" in sys.argv
-    main(force=force)
+    main()
