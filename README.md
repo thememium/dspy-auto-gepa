@@ -45,23 +45,43 @@ large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
 dspy.configure(lm=lm)
 
 auto = AutoGEPA(
+    rows=rows,
+    module=program,
+    name="TicketSignature",
     input_fields=["message"],
     output_fields=["urgency", "sentiment"],
     metric_lm=large_lm,
     reflection_lm=large_lm,
 )
 
-prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
+results = auto.run(force=False)  # Set True to re-run even if a saved model exists
 
-baseline = auto.run_baseline(module=program, prepared=prepared)
+# Check if a cached model was loaded
+if results.loaded_from:
+    print(f"Loaded existing model from {results.loaded_from}")
+else:
+    print(f"Baseline score: {results.baseline:.4f}")
+    print(f"Optimized score: {results.optimized:.4f}")
+    print(f"Improvement: {results.improvement:.4f}")
+    print(f"Saved optimized program to {results.saved_to}")
+```
 
-optimized = auto.train(module=program, prepared=prepared)
+### Advanced: step-by-step control
+
+If you prefer fine-grained control over each stage, you can call the individual
+methods that `run()` orchestrates under the hood:
+
+```python
+prepared = auto.prepare()
+
+baseline = auto.run_baseline(prepared=prepared)
+
+optimized = auto.train(prepared=prepared)
 
 final = auto.run_baseline(module=optimized, prepared=prepared)
 
 # Or compare and promote
 comparison = auto.compare(
-    baseline_module=program,
     optimized_module=optimized,
     prepared=prepared,
 )
@@ -76,6 +96,9 @@ auto.promote(
 - `AutoGEPA(...)` — all configuration fields accepted directly in the constructor:
   - `input_fields: list[str]` — required
   - `output_fields: list[str]` — required
+  - `rows: list[dict[str, Any]] | None = None` — training data
+  - `module: dspy.Module | None = None` — the DSPy module to optimize
+  - `name: str | None = None` — task name for artifact subdirectory
   - `split: tuple[float, ...] = (0.7, 0.2, 0.1)`
   - `seed: int = 42`
   - `artifact_dir: Path | str = ".auto_gepa"`
@@ -83,12 +106,21 @@ auto.promote(
   - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
   - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
   - `num_threads: int = 16`
-- `AutoGEPA.prepare(rows, module, name=None, force=False)` → `PreparedRun`
-  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`. Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
+- `AutoGEPA.run(rows=None, module=None, name=None, force=False)` → `RunResult`
+  - Orchestrates the full pipeline: prepare → baseline → train → compare → promote.
+  - Uses `rows`, `module`, `name` from the constructor if not overridden.
+  - If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training.
+  - Returns a `RunResult` with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached).
+- `AutoGEPA.prepare(rows=None, module=None, name=None, force=False)` → `PreparedRun`
+  - Uses `rows`, `module`, `name` from the constructor if not overridden.
+  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`.
   - `force=True` overwrites an existing metric file
-- `AutoGEPA.run_baseline(module, prepared)` → baseline scores
-- `AutoGEPA.train(module, prepared)` → optimized module
-- `AutoGEPA.compare(baseline_module, optimized_module, prepared)` → side-by-side scores
+- `AutoGEPA.run_baseline(module=None, prepared)` → baseline scores
+  - Uses `module` from the constructor if not overridden.
+- `AutoGEPA.train(module=None, prepared)` → optimized module
+  - Uses `module` from the constructor if not overridden.
+- `AutoGEPA.compare(optimized_module, prepared, baseline_module=None)` → side-by-side scores
+  - Uses `module` from the constructor as `baseline_module` if not overridden.
 - `AutoGEPA.promote(optimized_module, destination)` → save optimized program
 - `PreparedRun.metric()` → lazily loads the generated metric
 - `PreparedRun.train` / `PreparedRun.val` / `PreparedRun.test` → dataset splits
