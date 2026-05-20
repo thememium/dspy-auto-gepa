@@ -3,9 +3,35 @@ from typing import Any
 
 import dspy
 
+from .artifacts import load_metric
 from .config import AutoGEPAConfig
 from .data import split_examples, to_examples
 from .metric_builder import generate_metric_file
+
+
+class PreparedRun:
+    def __init__(
+        self,
+        train: list[dspy.Example],
+        val: list[dspy.Example],
+        test: list[dspy.Example],
+        metric_file: Path,
+        run_dir: Path,
+    ):
+        self.train = train
+        self.val = val
+        self.test = test
+        self.metric_file = metric_file
+        self.run_dir = run_dir
+
+    def metric(self) -> Any:
+        return load_metric(self.metric_file)
+
+    def __repr__(self) -> str:
+        return (
+            f"PreparedRun(train={len(self.train)}, val={len(self.val)}, "
+            f"test={len(self.test)}, run_dir={self.run_dir})"
+        )
 
 
 class AutoGEPA:
@@ -26,7 +52,7 @@ class AutoGEPA:
         module: dspy.Module,
         name: str | None = None,
         force: bool = False,
-    ) -> dict[str, Any]:
+    ) -> PreparedRun:
         task_name = name or module.__class__.__name__
         run_dir = self._run_dir(task_name)
         self._current_run_dir = run_dir
@@ -43,9 +69,9 @@ class AutoGEPA:
             self.config.seed,
         )
 
-        metric_path = run_dir / "metric.py"
+        metric_file = run_dir / "metric.py"
 
-        if metric_path.exists() and not force:
+        if metric_file.exists() and not force:
             pass
         else:
             generate_metric_file(
@@ -53,27 +79,26 @@ class AutoGEPA:
                 output_fields=self.config.output_fields,
                 sample_rows=rows,
                 module=module,
-                out_path=metric_path,
+                out_path=metric_file,
             )
 
-        return {
-            "train": train,
-            "val": val or test,
-            "test": test,
-            "metric_file": metric_path,
-            "run_dir": run_dir,
-        }
+        return PreparedRun(
+            train=train,
+            val=val or test,
+            test=test,
+            metric_file=metric_file,
+            run_dir=run_dir,
+        )
 
     def run_baseline(
         self,
         *,
         module: dspy.Module,
-        testset: list[dspy.Example],
-        metric: Any,
+        prepared: PreparedRun,
     ) -> dict[str, Any]:
         evaluator = dspy.Evaluate(
-            devset=testset,
-            metric=metric,
+            devset=prepared.test,
+            metric=prepared.metric(),
             num_threads=self.config.num_threads,
             display_progress=True,
             display_table=True,
@@ -85,12 +110,10 @@ class AutoGEPA:
         self,
         *,
         module: dspy.Module,
-        trainset: list[dspy.Example],
-        valset: list[dspy.Example],
-        metric: Any,
+        prepared: PreparedRun,
     ) -> dspy.Module:
         optimizer = dspy.GEPA(
-            metric=metric,
+            metric=prepared.metric(),
             auto=self.config.gepa_auto,
             reflection_lm=dspy.LM(
                 self.config.reflection_model,
@@ -104,8 +127,8 @@ class AutoGEPA:
 
         optimized = optimizer.compile(
             module,
-            trainset=trainset,
-            valset=valset,
+            trainset=prepared.train,
+            valset=prepared.val,
         )
 
         return optimized
@@ -115,19 +138,10 @@ class AutoGEPA:
         *,
         baseline_module: dspy.Module,
         optimized_module: dspy.Module,
-        testset: list[dspy.Example],
-        metric: Any,
+        prepared: PreparedRun,
     ) -> dict[str, Any]:
-        baseline = self.run_baseline(
-            module=baseline_module,
-            testset=testset,
-            metric=metric,
-        )
-        optimized = self.run_baseline(
-            module=optimized_module,
-            testset=testset,
-            metric=metric,
-        )
+        baseline = self.run_baseline(module=baseline_module, prepared=prepared)
+        optimized = self.run_baseline(module=optimized_module, prepared=prepared)
         return {
             "baseline": baseline["score"],
             "optimized": optimized["score"],
