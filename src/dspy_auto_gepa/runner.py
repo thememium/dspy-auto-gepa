@@ -74,13 +74,15 @@ class AutoGEPA:
         if metric_file.exists() and not force:
             pass
         else:
-            generate_metric_file(
-                input_fields=self.config.input_fields,
-                output_fields=self.config.output_fields,
-                sample_rows=rows,
-                module=module,
-                out_path=metric_file,
-            )
+            with dspy.context(lm=self.config.metric_lm):
+                generate_metric_file(
+                    input_fields=self.config.input_fields,
+                    output_fields=self.config.output_fields,
+                    sample_rows=rows,
+                    module=module,
+                    out_path=metric_file,
+                    metric_lm=self.config.metric_lm,
+                )
 
         return PreparedRun(
             train=train,
@@ -115,11 +117,7 @@ class AutoGEPA:
         optimizer = dspy.GEPA(
             metric=prepared.metric(),
             auto=self.config.gepa_auto,
-            reflection_lm=dspy.LM(
-                self.config.reflection_model,
-                temperature=1.0,
-                max_tokens=32000,
-            ),
+            reflection_lm=self.config.reflection_lm,
             num_threads=self.config.num_threads,
             track_stats=True,
             log_dir=str(self.config.artifact_dir / "gepa_logs"),
