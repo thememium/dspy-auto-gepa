@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from dspy_auto_gepa import AutoGEPAConfig
+from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
 from dspy_auto_gepa.data import split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
 
@@ -39,6 +39,24 @@ def test_config_validation_bad_gepa_auto():
             output_fields=["b"],
             gepa_auto=invalid,
         )
+
+
+def test_flat_autogepa_constructor():
+    auto = AutoGEPA(
+        input_fields=["message"],
+        output_fields=["label"],
+        split=(0.8, 0.1, 0.1),
+        seed=123,
+        gepa_auto="medium",
+        num_threads=4,
+    )
+    assert auto.config.input_fields == ["message"]
+    assert auto.config.output_fields == ["label"]
+    assert auto.config.split == (0.8, 0.1, 0.1)
+    assert auto.config.seed == 123
+    assert auto.config.gepa_auto == "medium"
+    assert auto.config.num_threads == 4
+    assert auto.config.artifact_dir.exists()
 
 
 def test_to_examples():
