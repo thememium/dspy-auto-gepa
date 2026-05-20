@@ -13,7 +13,7 @@ class AutoGEPA:
         self.config = config
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    def scaffold(
+    def prepare(
         self,
         *,
         rows: list[dict[str, Any]],
@@ -45,7 +45,7 @@ class AutoGEPA:
             "train": train,
             "val": val or test,
             "test": test,
-            "metric_path": metric_path,
+            "metric_file": metric_path,
         }
 
     def run_baseline(

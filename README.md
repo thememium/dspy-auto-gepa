@@ -52,25 +52,25 @@ auto = AutoGEPA(
     )
 )
 
-bundle = auto.scaffold(rows=rows, module=program)
-metric = load_metric(bundle["metric_path"])
+prepared = auto.prepare(rows=rows, module=program)
+metric = load_metric(prepared["metric_file"])
 
 baseline = auto.run_baseline(
     module=program,
-    testset=bundle["test"],
+    testset=prepared["test"],
     metric=metric,
 )
 
 optimized = auto.train(
     module=program,
-    trainset=bundle["train"],
-    valset=bundle["val"],
+    trainset=prepared["train"],
+    valset=prepared["val"],
     metric=metric,
 )
 
 final = auto.run_baseline(
     module=optimized,
-    testset=bundle["test"],
+    testset=prepared["test"],
     metric=metric,
 )
 
@@ -78,7 +78,7 @@ final = auto.run_baseline(
 comparison = auto.compare(
     baseline_module=program,
     optimized_module=optimized,
-    testset=bundle["test"],
+    testset=prepared["test"],
     metric=metric,
 )
 auto.promote(optimized_module=optimized, destination="optimized_ticket_classifier.json")
@@ -87,7 +87,7 @@ auto.promote(optimized_module=optimized, destination="optimized_ticket_classifie
 ## API
 
 - `AutoGEPAConfig` — task settings, split, models, artifact directory
-- `AutoGEPA.scaffold(rows, module)` → train/val/test + generated metric file
+- `AutoGEPA.prepare(rows, module)` → train/val/test + generated metric file
 - `AutoGEPA.run_baseline(module, testset, metric)` → baseline scores
 - `AutoGEPA.train(module, trainset, valset, metric)` → optimized module
 - `AutoGEPA.compare(baseline_module, optimized_module, testset, metric)` → side-by-side scores
