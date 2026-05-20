@@ -5,7 +5,11 @@ description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
 requires-python = ">=3.12"
-dependencies = ["dspy>=3.2.1", "pandas>=3.0.3"]
+dependencies = [
+    "dspy>=3.2.1",
+    "pandas>=3.0.3",
+    "pydantic>=2.13.4",
+]
 
 [project.scripts]
 dspy-auto-gepa = "dspy_auto_gepa:main"

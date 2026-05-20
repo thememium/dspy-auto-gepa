@@ -376,6 +376,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dspy" },
     { name = "pandas" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -393,6 +394,7 @@ dev = [
 requires-dist = [
     { name = "dspy", specifier = ">=3.2.1" },
     { name = "pandas", specifier = ">=3.0.3" },
+    { name = "pydantic", specifier = ">=2.13.4" },
 ]
 
 [package.metadata.requires-dev]
