@@ -65,15 +65,23 @@ def generate_metric_file(
     sample_rows: list[dict[str, Any]],
     module: dspy.Module,
     out_path: Path,
+    metric_lm: dspy.LM | None = None,
 ) -> Path:
     generator = dspy.ChainOfThought(MetricSpecGenerator)
 
-    result = generator(
-        input_keys=input_fields,
-        output_keys=output_fields,
-        sample_rows_json=json.dumps(sample_rows[:5], indent=2, default=str),
-        module_repr=repr(module),
-    )
+    def _invoke():
+        return generator(
+            input_keys=input_fields,
+            output_keys=output_fields,
+            sample_rows_json=json.dumps(sample_rows[:5], indent=2, default=str),
+            module_repr=repr(module),
+        )
+
+    if metric_lm is not None:
+        with dspy.context(lm=metric_lm):
+            result = _invoke()
+    else:
+        result = _invoke()
 
     source = _strip_markdown_fences(result.metric_source)
     out_path.parent.mkdir(parents=True, exist_ok=True)
