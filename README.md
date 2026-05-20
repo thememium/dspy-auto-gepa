@@ -59,13 +59,13 @@ results = auto.run(
 )
 
 # Check if a cached model was loaded
-if results.get("loaded_from"):
-    print(f"Loaded existing model from {results['loaded_from']}")
+if results.loaded_from:
+    print(f"Loaded existing model from {results.loaded_from}")
 else:
-    print(f"Baseline score: {results['baseline']:.4f}")
-    print(f"Optimized score: {results['optimized']:.4f}")
-    print(f"Improvement: {results['improvement']:.4f}")
-    print(f"Saved optimized program to {results['saved_to']}")
+    print(f"Baseline score: {results.baseline:.4f}")
+    print(f"Optimized score: {results.optimized:.4f}")
+    print(f"Improvement: {results.improvement:.4f}")
+    print(f"Saved optimized program to {results.saved_to}")
 ```
 
 ### Advanced: step-by-step control
