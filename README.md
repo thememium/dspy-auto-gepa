@@ -40,17 +40,15 @@ rows = [
 ]
 
 # Configure models
-metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
-reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
-dspy.configure(lm=metric_lm)
+lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
+dspy.configure(lm=lm)
 
 auto = AutoGEPA(
     input_fields=["message"],
     output_fields=["urgency", "sentiment"],
-    split=(0.7, 0.2, 0.1),
-    gepa_auto="light",
-    metric_lm=metric_lm,
-    reflection_lm=reflection_lm,
+    metric_lm=large_lm,
+    reflection_lm=large_lm,
 )
 
 prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
