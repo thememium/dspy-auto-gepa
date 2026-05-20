@@ -1,6 +1,10 @@
-def main() -> None:
-    print("Hello from dspy-auto-gepa!")
+from .artifacts import load_metric, save_results
+from .config import AutoGEPAConfig
+from .runner import AutoGEPA
 
-
-if __name__ == "__main__":
-    main()
+__all__ = [
+    "AutoGEPA",
+    "AutoGEPAConfig",
+    "load_metric",
+    "save_results",
+]
