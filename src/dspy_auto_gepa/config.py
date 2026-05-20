@@ -10,8 +10,8 @@ class AutoGEPAConfig:
     split: tuple[float, ...] = (0.7, 0.2, 0.1)
     seed: int = 42
     artifact_dir: Path = field(default_factory=lambda: Path(".auto_gepa"))
-    metric_model: str = "openrouter/google/gemini-2.5-flash-lite"
-    reflection_model: str = "openai/gpt-5"
+    metric_model: str = "openrouter/openai/gpt-oss-120b"
+    reflection_model: str = "openrouter/moonshotai/kimi-k2.5"
     gepa_auto: Literal["light", "medium", "heavy"] = "light"
     num_threads: int = 16
 
