@@ -5,7 +5,7 @@ description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
 requires-python = ">=3.12"
-dependencies = ["dspy>=3.2.1"]
+dependencies = ["dspy>=3.2.1", "pandas>=3.0.3"]
 
 [project.scripts]
 dspy-auto-gepa = "dspy_auto_gepa:main"
@@ -27,6 +27,7 @@ dev = [
 
 [tool.deptry]
 known_first_party = ["dspy_auto_gepa"]
+per_rule_ignores = { DEP002 = ["pandas"] }
 
 [tool.poe.tasks]
 example = "uv run example.py"
