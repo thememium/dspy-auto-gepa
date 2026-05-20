@@ -1,13 +1,8 @@
 """Example usage of dspy-auto-gepa with a ticket classification task."""
 
-import warnings
-
 import dspy
 
 from dspy_auto_gepa import AutoGEPA
-
-warnings.filterwarnings("ignore", module="litellm")
-warnings.filterwarnings("ignore", module="dspy")
 
 
 class TicketSignature(dspy.Signature):
@@ -24,6 +19,14 @@ program = dspy.ChainOfThought(TicketSignature)
 rows = [
     {"message": "The server room AC is out and equipment is overheating.", "urgency": "high", "sentiment": "negative"},
     {"message": "Can someone clean conference room B next week?", "urgency": "low", "sentiment": "neutral"},
+    {"message": "Thanks for fixing the VPN, works perfectly now!", "urgency": "low", "sentiment": "positive"},
+    {"message": "All login credentials expired overnight, nobody can access the staging environment.", "urgency": "high", "sentiment": "negative"},
+    {"message": "Would it be possible to get another monitor for my desk?", "urgency": "low", "sentiment": "neutral"},
+    {"message": "Build pipeline broken since 3am, deployments are failing across all projects.", "urgency": "high", "sentiment": "negative"},
+    {"message": "The new onboarding checklist is really helpful, appreciate the update!", "urgency": "low", "sentiment": "positive"},
+    {"message": "Conference room camera autofocus keeps glitching during client calls.", "urgency": "medium", "sentiment": "negative"},
+    {"message": "Reminder to renew SSL certs for *.internal.company.com before March 15.", "urgency": "medium", "sentiment": "neutral"},
+    {"message": "Shout out to IT for the quick turnaround on my laptop swap last Friday!", "urgency": "low", "sentiment": "positive"},
 ]
 # fmt: on
 
