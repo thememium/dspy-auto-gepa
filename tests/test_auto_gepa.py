@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import dspy
 import pytest
@@ -91,12 +91,12 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
     )
 
     module = DummyModule()
-    module.load = MagicMock()
     rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
 
-    results = auto.run(rows=rows, module=module, name=task_name, force=False)
+    with patch.object(module, "load") as mock_load:
+        results = auto.run(rows=rows, module=module, name=task_name, force=False)
 
-    module.load.assert_called_once_with(str(model_path))
+        mock_load.assert_called_once_with(str(model_path))
     assert results.loaded_from == str(model_path)
     assert results.baseline is None
     assert results.optimized is None
