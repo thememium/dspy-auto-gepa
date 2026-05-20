@@ -9,7 +9,7 @@ logging.getLogger("litellm").setLevel(logging.ERROR)
 
 import dspy  # noqa: E402
 
-from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig, load_metric  # noqa: E402
+from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig  # noqa: E402
 
 
 class TicketSignature(dspy.Signature):
@@ -44,43 +44,28 @@ def main() -> None:
     )
 
     prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
-    metric = load_metric(prepared["metric_file"])
 
-    baseline = auto.run_baseline(
-        module=program,
-        testset=prepared["test"],
-        metric=metric,
-    )
+    baseline = auto.run_baseline(module=program, prepared=prepared)
     print(f"Baseline score: {baseline['score']}")
 
-    optimized = auto.train(
-        module=program,
-        trainset=prepared["train"],
-        valset=prepared["val"],
-        metric=metric,
-    )
+    optimized = auto.train(module=program, prepared=prepared)
 
-    final = auto.run_baseline(
-        module=optimized,
-        testset=prepared["test"],
-        metric=metric,
-    )
+    final = auto.run_baseline(module=optimized, prepared=prepared)
     print(f"Optimized score: {final['score']}")
 
     comparison = auto.compare(
         baseline_module=program,
         optimized_module=optimized,
-        testset=prepared["test"],
-        metric=metric,
+        prepared=prepared,
     )
     print(f"Improvement: {comparison['improvement']}")
 
     auto.promote(
         optimized_module=optimized,
-        destination=prepared["run_dir"] / "optimized_ticket_classifier.json",
+        destination=prepared.run_dir / "optimized_ticket_classifier.json",
     )
     print(
-        f"Saved optimized program to {prepared['run_dir'] / 'optimized_ticket_classifier.json'}"
+        f"Saved optimized program to {prepared.run_dir / 'optimized_ticket_classifier.json'}"
     )
 
 
