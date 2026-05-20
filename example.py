@@ -31,7 +31,7 @@ rows = [
 
 
 def main() -> None:
-    lm = dspy.LM("openrouter/google/gemini-2.5-flash-lite", cache=False)
+    lm = dspy.LM("openrouter/openai/gpt-oss-120b", cache=False)
     dspy.configure(lm=lm)
 
     auto = AutoGEPA(
