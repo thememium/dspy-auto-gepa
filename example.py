@@ -1,15 +1,13 @@
 """Example usage of dspy-auto-gepa with a ticket classification task."""
 
-import logging
-import os
+import warnings
 
-# litellm warns about missing botocore on import even when Bedrock/SageMaker are unused.
-os.environ["LITELLM_LOG"] = "ERROR"
-logging.getLogger("litellm").setLevel(logging.ERROR)
+import dspy
 
-import dspy  # noqa: E402
+from dspy_auto_gepa import AutoGEPA
 
-from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig  # noqa: E402
+warnings.filterwarnings("ignore", module="litellm")
+warnings.filterwarnings("ignore", module="dspy")
 
 
 class TicketSignature(dspy.Signature):
@@ -31,24 +29,20 @@ rows = [
 
 
 def main() -> None:
-    lm = dspy.LM(
+    metric_lm = dspy.LM(
         "openrouter/openai/gpt-oss-120b",
         extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
         cache=False,
     )
 
     teacher_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5", cache=False)
-    dspy.configure(lm=lm)
+    dspy.configure(lm=metric_lm)
 
     auto = AutoGEPA(
-        AutoGEPAConfig(
-            input_fields=["message"],
-            output_fields=["urgency", "sentiment"],
-            split=(0.7, 0.2, 0.1),
-            gepa_auto="light",
-            metric_lm=teacher_lm,
-            reflection_lm=teacher_lm,
-        )
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        metric_lm=teacher_lm,
+        reflection_lm=teacher_lm,
     )
 
     prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
@@ -66,15 +60,13 @@ def main() -> None:
         optimized_module=optimized,
         prepared=prepared,
     )
-    print(f"Improvement: {comparison['improvement']}")
+    print(f"Improvement: {comparison['improvement']:.4f}")
 
     auto.promote(
         optimized_module=optimized,
-        destination=prepared.run_dir / "optimized_ticket_classifier.json",
+        destination=prepared.run_dir / "optimized_program.json",
     )
-    print(
-        f"Saved optimized program to {prepared.run_dir / 'optimized_ticket_classifier.json'}"
-    )
+    print(f"Saved optimized program to {prepared.run_dir / 'optimized_program.json'}")
 
 
 if __name__ == "__main__":
