@@ -29,7 +29,7 @@ dev = [
 known_first_party = ["dspy_auto_gepa"]
 
 [tool.poe.tasks]
-dev = "uv run src/dspy_auto_gepa/__init__.py"
+example = "uv run example.py"
 clean-full = "sh -c 'uv run isort . && uv run ruff check . --fix && uv run ruff format . && uv run deptry . && uv run ty check'"
 clean = "sh -c 'uv run isort . && uv run ruff format .'"
 test = "uv run pytest tests/ -v"
