@@ -16,7 +16,7 @@ pip install dspy-auto-gepa
 
 ```python
 import dspy
-from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig, load_metric
+from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
 
 class TicketSignature(dspy.Signature):
     """Classify support tickets."""
@@ -39,9 +39,10 @@ rows = [
     },
 ]
 
-dspy.configure(
-    lm=dspy.LM("openrouter/google/gemini-2.5-flash-lite")
-)
+# Configure models
+metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
+dspy.configure(lm=metric_lm)
 
 auto = AutoGEPA(
     AutoGEPAConfig(
@@ -49,52 +50,46 @@ auto = AutoGEPA(
         output_fields=["urgency", "sentiment"],
         split=(0.7, 0.2, 0.1),
         gepa_auto="light",
+        metric_lm=metric_lm,
+        reflection_lm=reflection_lm,
     )
 )
 
 prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
-metric = load_metric(prepared["metric_file"])
 
-baseline = auto.run_baseline(
-    module=program,
-    testset=prepared["test"],
-    metric=metric,
-)
+baseline = auto.run_baseline(module=program, prepared=prepared)
 
-optimized = auto.train(
-    module=program,
-    trainset=prepared["train"],
-    valset=prepared["val"],
-    metric=metric,
-)
+optimized = auto.train(module=program, prepared=prepared)
 
-final = auto.run_baseline(
-    module=optimized,
-    testset=prepared["test"],
-    metric=metric,
-)
+final = auto.run_baseline(module=optimized, prepared=prepared)
 
 # Or compare and promote
 comparison = auto.compare(
     baseline_module=program,
     optimized_module=optimized,
-    testset=prepared["test"],
-    metric=metric,
+    prepared=prepared,
 )
-auto.promote(optimized_module=optimized, destination="optimized_ticket_classifier.json")
+auto.promote(
+    optimized_module=optimized,
+    destination=prepared.run_dir / "optimized_ticket_classifier.json",
+)
 ```
 
 ## API
 
 - `AutoGEPAConfig` — task settings, split, models, artifact directory
-- `AutoGEPA.prepare(rows, module, name=None, force=False)` → train/val/test + generated metric file
-  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__` (e.g., `"ChainOfThought"`). Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
+  - `metric_lm: dspy.LM` — model used to generate the metric file
+  - `reflection_lm: dspy.LM` — model used by GEPA for reflective optimization
+- `AutoGEPA.prepare(rows, module, name=None, force=False)` → `PreparedRun`
+  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`. Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
   - `force=True` overwrites an existing metric file
-- `AutoGEPA.run_baseline(module, testset, metric)` → baseline scores
-- `AutoGEPA.train(module, trainset, valset, metric)` → optimized module
-- `AutoGEPA.compare(baseline_module, optimized_module, testset, metric)` → side-by-side scores
+- `AutoGEPA.run_baseline(module, prepared)` → baseline scores
+- `AutoGEPA.train(module, prepared)` → optimized module
+- `AutoGEPA.compare(baseline_module, optimized_module, prepared)` → side-by-side scores
 - `AutoGEPA.promote(optimized_module, destination)` → save optimized program
-- `load_metric(path)` → import a generated metric `.py` file dynamically
+- `PreparedRun.metric()` → lazily loads the generated metric
+- `PreparedRun.train` / `PreparedRun.val` / `PreparedRun.test` → dataset splits
+- `PreparedRun.run_dir` → artifact folder for this run
 
 ## License
 
