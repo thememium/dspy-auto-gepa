@@ -31,7 +31,7 @@ rows = [
 # fmt: on
 
 
-def main() -> None:
+def main(force: bool = False) -> None:
     metric_lm = dspy.LM(
         "openrouter/openai/gpt-oss-120b",
         extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
@@ -48,29 +48,20 @@ def main() -> None:
         reflection_lm=teacher_lm,
     )
 
-    prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
+    results = auto.run(rows=rows, module=program, name="TicketSignature", force=force)
 
-    baseline = auto.run_baseline(module=program, prepared=prepared)
-    print(f"Baseline score: {baseline['score']}")
+    if results.get("loaded_from"):
+        print(f"Loaded existing model from {results['loaded_from']}")
+        return
 
-    optimized = auto.train(module=program, prepared=prepared)
-
-    final = auto.run_baseline(module=optimized, prepared=prepared)
-    print(f"Optimized score: {final['score']}")
-
-    comparison = auto.compare(
-        baseline_module=program,
-        optimized_module=optimized,
-        prepared=prepared,
-    )
-    print(f"Improvement: {comparison['improvement']:.4f}")
-
-    auto.promote(
-        optimized_module=optimized,
-        destination=prepared.run_dir / "optimized_program.json",
-    )
-    print(f"Saved optimized program to {prepared.run_dir / 'optimized_program.json'}")
+    print(f"Baseline score: {results['baseline']}")
+    print(f"Optimized score: {results['optimized']}")
+    print(f"Improvement: {results['improvement']:.4f}")
+    print(f"Saved optimized program to {results['saved_to']}")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    force = "--force" in sys.argv
+    main(force=force)
