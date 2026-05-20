@@ -50,14 +50,14 @@ def main(force: bool = False) -> None:
 
     results = auto.run(rows=rows, module=program, name="TicketSignature", force=force)
 
-    if results.get("loaded_from"):
-        print(f"Loaded existing model from {results['loaded_from']}")
+    if results.loaded_from:
+        print(f"Loaded existing model from {results.loaded_from}")
         return
 
-    print(f"Baseline score: {results['baseline']}")
-    print(f"Optimized score: {results['optimized']}")
-    print(f"Improvement: {results['improvement']:.4f}")
-    print(f"Saved optimized program to {results['saved_to']}")
+    print(f"Baseline score: {results.baseline}")
+    print(f"Optimized score: {results.optimized}")
+    print(f"Improvement: {results.improvement:.4f}")
+    print(f"Saved optimized program to {results.saved_to}")
 
 
 if __name__ == "__main__":
