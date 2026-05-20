@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import dspy
+
 
 @dataclass
 class AutoGEPAConfig:
@@ -10,8 +12,12 @@ class AutoGEPAConfig:
     split: tuple[float, ...] = (0.7, 0.2, 0.1)
     seed: int = 42
     artifact_dir: Path = field(default_factory=lambda: Path(".auto_gepa"))
-    metric_model: str = "openrouter/openai/gpt-oss-120b"
-    reflection_model: str = "openrouter/moonshotai/kimi-k2.5"
+    metric_lm: dspy.LM = field(
+        default_factory=lambda: dspy.LM("openrouter/openai/gpt-oss-120b")
+    )
+    reflection_lm: dspy.LM = field(
+        default_factory=lambda: dspy.LM("openrouter/moonshotai/kimi-k2.5")
+    )
     gepa_auto: Literal["light", "medium", "heavy"] = "light"
     num_threads: int = 16
 
