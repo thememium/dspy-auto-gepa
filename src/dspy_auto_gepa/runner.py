@@ -12,15 +12,25 @@ class AutoGEPA:
     def __init__(self, config: AutoGEPAConfig):
         self.config = config
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
+        self._current_run_dir: Path | None = None
+
+    def _run_dir(self, name: str) -> Path:
+        run_dir = self.config.artifact_dir / name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     def prepare(
         self,
         *,
         rows: list[dict[str, Any]],
         module: dspy.Module,
-        metric_name: str | None = None,
+        name: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
+        task_name = name or module.__class__.__name__
+        run_dir = self._run_dir(task_name)
+        self._current_run_dir = run_dir
+
         examples = to_examples(
             rows,
             self.config.input_fields,
@@ -33,30 +43,25 @@ class AutoGEPA:
             self.config.seed,
         )
 
-        if metric_name:
-            metric_path = self.config.artifact_dir / metric_name
-        else:
-            metric_path = self.config.artifact_dir / "metric.py"
+        metric_path = run_dir / "metric.py"
 
         if metric_path.exists() and not force:
-            raise FileExistsError(
-                f"Metric file already exists: {metric_path}. "
-                "Use metric_name='...' or force=True to overwrite."
+            pass
+        else:
+            generate_metric_file(
+                input_fields=self.config.input_fields,
+                output_fields=self.config.output_fields,
+                sample_rows=rows,
+                module=module,
+                out_path=metric_path,
             )
-
-        generate_metric_file(
-            input_fields=self.config.input_fields,
-            output_fields=self.config.output_fields,
-            sample_rows=rows,
-            module=module,
-            out_path=metric_path,
-        )
 
         return {
             "train": train,
             "val": val or test,
             "test": test,
             "metric_file": metric_path,
+            "run_dir": run_dir,
         }
 
     def run_baseline(
@@ -74,7 +79,7 @@ class AutoGEPA:
             display_table=True,
         )
         result = evaluator(module)
-        return {"score": result}
+        return {"score": result.score}
 
     def train(
         self,
@@ -103,7 +108,6 @@ class AutoGEPA:
             valset=valset,
         )
 
-        optimized.save(str(self.config.artifact_dir / "optimized_program.json"))
         return optimized
 
     def compare(
