@@ -12,12 +12,8 @@ class AutoGEPAConfig:
     split: tuple[float, ...] = (0.7, 0.2, 0.1)
     seed: int = 42
     artifact_dir: Path = field(default_factory=lambda: Path(".auto_gepa"))
-    metric_lm: dspy.LM = field(
-        default_factory=lambda: dspy.LM("openrouter/openai/gpt-oss-120b")
-    )
-    reflection_lm: dspy.LM = field(
-        default_factory=lambda: dspy.LM("openrouter/moonshotai/kimi-k2.5")
-    )
+    metric_lm: dspy.LM | None = None
+    reflection_lm: dspy.LM | None = None
     gepa_auto: Literal["light", "medium", "heavy"] = "light"
     num_threads: int = 16
 
@@ -28,3 +24,11 @@ class AutoGEPAConfig:
             raise ValueError("split proportions must sum to <= 1.0")
         if self.gepa_auto not in ("light", "medium", "heavy"):
             raise ValueError("gepa_auto must be one of: light, medium, heavy")
+        if self.metric_lm is None:
+            self.metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+        if self.reflection_lm is None:
+            self.reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
+        if self.metric_lm is None:
+            self.metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+        if self.reflection_lm is None:
+            self.reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
