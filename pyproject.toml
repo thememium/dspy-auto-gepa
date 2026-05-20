@@ -1,0 +1,41 @@
+[project]
+name = "dspy-auto-gepa"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+dspy-auto-gepa = "dspy_auto_gepa:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+  "deptry>=0.25.1",
+  "isort>=8.0.1",
+  "poethepoet>=0.46.0",
+  "pytest>=9.0.3",
+  "ruff>=0.15.13",
+  "ty>=0.0.38",
+  "usechange>=0.1.28",
+]
+
+[tool.deptry]
+known_first_party = ["dspy_auto_gepa"]
+
+[tool.poe.tasks]
+dev = "uv run src/dspy_auto_gepa/__init__.py"
+clean-full = "sh -c 'uv run isort . && uv run ruff check . --fix && uv run ruff format . && uv run deptry . && uv run ty check'"
+clean = "sh -c 'uv run isort . && uv run ruff format .'"
+test = "uv run pytest tests/ -v"
+sort = "uv run isort ."
+lint = "uv run ruff check ."
+format = "uv run ruff format ."
+deptry = "uv deptry ."
+typecheck = "uv run ty check"
+release = "uv run usechange release"
