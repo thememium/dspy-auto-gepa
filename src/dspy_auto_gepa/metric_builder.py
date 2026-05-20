@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -69,21 +70,25 @@ def generate_metric_file(
 ) -> Path:
     generator = dspy.ChainOfThought(MetricSpecGenerator)
 
-    def _invoke():
-        return generator(
-            input_keys=input_fields,
-            output_keys=output_fields,
-            sample_rows_json=json.dumps(sample_rows[:5], indent=2, default=str),
-            module_repr=repr(module),
-        )
-
     if metric_lm is not None:
-        with dspy.context(lm=metric_lm):
-            result = _invoke()
-    else:
-        result = _invoke()
+        generator.set_lm(metric_lm)
+
+    result = generator(
+        input_keys=input_fields,
+        output_keys=output_fields,
+        sample_rows_json=json.dumps(sample_rows[:5], indent=2, default=str),
+        module_repr=repr(module),
+    )
 
     source = _strip_markdown_fences(result.metric_source)
+
+    try:
+        ast.parse(source)
+    except SyntaxError:
+        raise ValueError(
+            f"Generated metric is not valid Python code:\n{source[:500]}..."
+        )
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(source)
     return out_path
