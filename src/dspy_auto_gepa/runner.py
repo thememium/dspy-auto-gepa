@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import dspy
+from pydantic import BaseModel, Field
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
@@ -31,6 +32,54 @@ class PreparedRun:
         return (
             f"PreparedRun(train={len(self.train)}, val={len(self.val)}, "
             f"test={len(self.test)}, run_dir={self.run_dir})"
+        )
+
+
+class RunResult(BaseModel):
+    """Result returned by AutoGEPA.run()."""
+
+    baseline: float | None = None
+    optimized: float | None = None
+    improvement: float | None = None
+    saved_to: str | None = None
+    loaded_from: str | None = None
+
+    def __repr__(self) -> str:
+        if self.loaded_from:
+            return f"RunResult(loaded_from={self.loaded_from!r})"
+        return (
+            f"RunResult(baseline={self.baseline}, optimized={self.optimized}, "
+            f"improvement={self.improvement}, saved_to={self.saved_to!r})"
+        )
+
+
+class RunResult:
+    """Result returned by AutoGEPA.run().
+
+    Attributes are ``None`` when the result was loaded from an existing saved
+    model rather than freshly trained.
+    """
+
+    def __init__(
+        self,
+        baseline: float | None,
+        optimized: float | None,
+        improvement: float | None,
+        saved_to: str | None,
+        loaded_from: str | None,
+    ):
+        self.baseline = baseline
+        self.optimized = optimized
+        self.improvement = improvement
+        self.saved_to = saved_to
+        self.loaded_from = loaded_from
+
+    def __repr__(self) -> str:
+        if self.loaded_from:
+            return f"RunResult(loaded_from={self.loaded_from!r})"
+        return (
+            f"RunResult(baseline={self.baseline}, optimized={self.optimized}, "
+            f"improvement={self.improvement}, saved_to={self.saved_to!r})"
         )
 
 
@@ -160,14 +209,14 @@ class AutoGEPA:
         baseline_module: dspy.Module,
         optimized_module: dspy.Module,
         prepared: PreparedRun,
-    ) -> dict[str, Any]:
+    ) -> RunResult:
         baseline = self.run_baseline(module=baseline_module, prepared=prepared)
         optimized = self.run_baseline(module=optimized_module, prepared=prepared)
-        return {
-            "baseline": baseline["score"],
-            "optimized": optimized["score"],
-            "improvement": optimized["score"] - baseline["score"],
-        }
+        return RunResult(
+            baseline=baseline["score"],
+            optimized=optimized["score"],
+            improvement=optimized["score"] - baseline["score"],
+        )
 
     def run(
         self,
@@ -176,7 +225,7 @@ class AutoGEPA:
         module: dspy.Module,
         name: str | None = None,
         force: bool = False,
-    ) -> dict[str, Any]:
+    ) -> RunResult:
         task_name = name or self.name or module.__class__.__name__
         model_path = (
             self.config.artifact_dir / task_name / f"optimized_{task_name}.json"
@@ -184,12 +233,7 @@ class AutoGEPA:
 
         if model_path.exists() and not force:
             module.load(str(model_path))
-            return {
-                "baseline": None,
-                "optimized": None,
-                "improvement": None,
-                "loaded_from": str(model_path),
-            }
+            return RunResult(loaded_from=str(model_path))
 
         prepared = self.prepare(
             rows=rows,
@@ -210,12 +254,12 @@ class AutoGEPA:
             destination=model_path,
         )
 
-        return {
-            "baseline": comparison["baseline"],
-            "optimized": comparison["optimized"],
-            "improvement": comparison["improvement"],
-            "saved_to": str(model_path),
-        }
+        return RunResult(
+            baseline=comparison.baseline,
+            optimized=comparison.optimized,
+            improvement=comparison.improvement,
+            saved_to=str(model_path),
+        )
 
     def promote(
         self,
