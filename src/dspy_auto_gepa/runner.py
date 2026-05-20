@@ -74,15 +74,14 @@ class AutoGEPA:
         if metric_file.exists() and not force:
             pass
         else:
-            with dspy.context(lm=self.config.metric_lm):
-                generate_metric_file(
-                    input_fields=self.config.input_fields,
-                    output_fields=self.config.output_fields,
-                    sample_rows=rows,
-                    module=module,
-                    out_path=metric_file,
-                    metric_lm=self.config.metric_lm,
-                )
+            generate_metric_file(
+                input_fields=self.config.input_fields,
+                output_fields=self.config.output_fields,
+                sample_rows=rows,
+                module=module,
+                out_path=metric_file,
+                metric_lm=self.config.metric_lm,
+            )
 
         return PreparedRun(
             train=train,
