@@ -35,10 +35,14 @@ def main(force: bool = False) -> None:
     metric_lm = dspy.LM(
         "openrouter/openai/gpt-oss-120b",
         extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
-        cache=False,
+        # cache=False,
     )
 
-    teacher_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5", cache=False)
+    teacher_lm = dspy.LM(
+        model="openrouter/moonshotai/kimi-k2.5",
+        # cache=False
+    )
+
     dspy.configure(lm=metric_lm)
 
     auto = AutoGEPA(
