@@ -40,6 +40,7 @@ class AutoGEPA:
         *,
         input_fields: list[str],
         output_fields: list[str],
+        name: str | None = None,
         split: tuple[float, ...] = (0.7, 0.2, 0.1),
         seed: int = 42,
         artifact_dir: Path | str = ".auto_gepa",
@@ -48,6 +49,7 @@ class AutoGEPA:
         gepa_auto: Literal["light", "medium", "heavy"] = "light",
         num_threads: int = 16,
     ):
+        self.name = name
         self.config = AutoGEPAConfig(
             input_fields=input_fields,
             output_fields=output_fields,
@@ -165,6 +167,54 @@ class AutoGEPA:
             "baseline": baseline["score"],
             "optimized": optimized["score"],
             "improvement": optimized["score"] - baseline["score"],
+        }
+
+    def run(
+        self,
+        *,
+        rows: list[dict[str, Any]],
+        module: dspy.Module,
+        name: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        task_name = name or self.name or module.__class__.__name__
+        model_path = (
+            self.config.artifact_dir / task_name / f"optimized_{task_name}.json"
+        )
+
+        if model_path.exists() and not force:
+            module.load(str(model_path))
+            return {
+                "baseline": None,
+                "optimized": None,
+                "improvement": None,
+                "loaded_from": str(model_path),
+            }
+
+        prepared = self.prepare(
+            rows=rows,
+            module=module,
+            name=task_name,
+            force=force,
+        )
+
+        optimized = self.train(module=module, prepared=prepared)
+        comparison = self.compare(
+            baseline_module=module,
+            optimized_module=optimized,
+            prepared=prepared,
+        )
+
+        self.promote(
+            optimized_module=optimized,
+            destination=model_path,
+        )
+
+        return {
+            "baseline": comparison["baseline"],
+            "optimized": comparison["optimized"],
+            "improvement": comparison["improvement"],
+            "saved_to": str(model_path),
         }
 
     def promote(
