@@ -31,13 +31,14 @@ rows = [
 
 
 def main() -> None:
-    metric_lm = dspy.LM(
+    lm = dspy.LM(
         "openrouter/openai/gpt-oss-120b",
         extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
+        cache=False,
     )
 
-    reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
-    dspy.configure(lm=metric_lm)
+    teacher_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5", cache=False)
+    dspy.configure(lm=lm)
 
     auto = AutoGEPA(
         AutoGEPAConfig(
@@ -45,8 +46,8 @@ def main() -> None:
             output_fields=["urgency", "sentiment"],
             split=(0.7, 0.2, 0.1),
             gepa_auto="light",
-            metric_lm=metric_lm,
-            reflection_lm=reflection_lm,
+            metric_lm=teacher_lm,
+            reflection_lm=teacher_lm,
         )
     )
 
