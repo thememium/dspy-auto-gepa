@@ -52,7 +52,7 @@ auto = AutoGEPA(
     )
 )
 
-prepared = auto.prepare(rows=rows, module=program)
+prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
 metric = load_metric(prepared["metric_file"])
 
 baseline = auto.run_baseline(
@@ -87,8 +87,8 @@ auto.promote(optimized_module=optimized, destination="optimized_ticket_classifie
 ## API
 
 - `AutoGEPAConfig` — task settings, split, models, artifact directory
-- `AutoGEPA.prepare(rows, module, metric_name=None, force=False)` → train/val/test + generated metric file
-  - `metric_name` overrides the default `metric.py` filename
+- `AutoGEPA.prepare(rows, module, name=None, force=False)` → train/val/test + generated metric file
+  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__` (e.g., `"ChainOfThought"`). Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
   - `force=True` overwrites an existing metric file
 - `AutoGEPA.run_baseline(module, testset, metric)` → baseline scores
 - `AutoGEPA.train(module, trainset, valset, metric)` → optimized module

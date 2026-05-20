@@ -1,8 +1,15 @@
 """Example usage of dspy-auto-gepa with a ticket classification task."""
 
-import dspy
+import logging
+import os
 
-from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig, load_metric
+# litellm warns about missing botocore on import even when Bedrock/SageMaker are unused.
+os.environ["LITELLM_LOG"] = "ERROR"
+logging.getLogger("litellm").setLevel(logging.ERROR)
+
+import dspy  # noqa: E402
+
+from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig, load_metric  # noqa: E402
 
 
 class TicketSignature(dspy.Signature):
@@ -24,7 +31,8 @@ rows = [
 
 
 def main() -> None:
-    dspy.configure(lm=dspy.LM("openrouter/google/gemini-2.5-flash-lite"))
+    lm = dspy.LM("openrouter/google/gemini-2.5-flash-lite", cache=False)
+    dspy.configure(lm=lm)
 
     auto = AutoGEPA(
         AutoGEPAConfig(
@@ -35,7 +43,7 @@ def main() -> None:
         )
     )
 
-    prepared = auto.prepare(rows=rows, module=program)
+    prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
     metric = load_metric(prepared["metric_file"])
 
     baseline = auto.run_baseline(
@@ -69,9 +77,11 @@ def main() -> None:
 
     auto.promote(
         optimized_module=optimized,
-        destination="optimized_ticket_classifier.json",
+        destination=prepared["run_dir"] / "optimized_ticket_classifier.json",
     )
-    print("Saved optimized program to optimized_ticket_classifier.json")
+    print(
+        f"Saved optimized program to {prepared['run_dir'] / 'optimized_ticket_classifier.json'}"
+    )
 
 
 if __name__ == "__main__":
