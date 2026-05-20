@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import dspy
 
@@ -35,8 +35,30 @@ class PreparedRun:
 
 
 class AutoGEPA:
-    def __init__(self, config: AutoGEPAConfig):
-        self.config = config
+    def __init__(
+        self,
+        *,
+        input_fields: list[str],
+        output_fields: list[str],
+        split: tuple[float, ...] = (0.7, 0.2, 0.1),
+        seed: int = 42,
+        artifact_dir: Path | str = ".auto_gepa",
+        metric_lm: dspy.LM | None = None,
+        reflection_lm: dspy.LM | None = None,
+        gepa_auto: Literal["light", "medium", "heavy"] = "light",
+        num_threads: int = 16,
+    ):
+        self.config = AutoGEPAConfig(
+            input_fields=input_fields,
+            output_fields=output_fields,
+            split=split,
+            seed=seed,
+            artifact_dir=Path(artifact_dir),
+            metric_lm=metric_lm,
+            reflection_lm=reflection_lm,
+            gepa_auto=gepa_auto,
+            num_threads=num_threads,
+        )
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._current_run_dir: Path | None = None
 
