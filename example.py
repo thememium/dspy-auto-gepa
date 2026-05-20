@@ -46,6 +46,9 @@ def main() -> None:
     dspy.configure(lm=metric_lm)
 
     auto = AutoGEPA(
+        rows=rows,
+        module=program,
+        name="TicketSignature",
         input_fields=["message"],
         output_fields=["urgency", "sentiment"],
         metric_lm=teacher_lm,
@@ -61,7 +64,7 @@ def main() -> None:
         response = input(f"Model found at {model_path}. Run GEPA again? (y/N): ")
         force = response.strip().lower() == "y"
 
-    results = auto.run(rows=rows, module=program, name="TicketSignature", force=force)
+    results = auto.run(force=force)
 
     if results.loaded_from:
         print(f"Loaded existing model from {results.loaded_from}")
