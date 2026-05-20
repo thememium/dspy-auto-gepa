@@ -381,7 +381,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "dspy", specifier = ">=3.0.0" }]
+requires-dist = [{ name = "dspy", specifier = ">=3.2.1" }]
 
 [package.metadata.requires-dev]
 dev = [
