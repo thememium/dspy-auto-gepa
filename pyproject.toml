@@ -1,11 +1,11 @@
 [project]
 name = "dspy-auto-gepa"
 version = "0.1.0"
-description = "Add your description here"
+description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["dspy>=3.0.0"]
 
 [project.scripts]
 dspy-auto-gepa = "dspy_auto_gepa:main"
