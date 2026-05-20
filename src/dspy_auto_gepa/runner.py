@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import dspy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
@@ -43,36 +43,6 @@ class RunResult(BaseModel):
     improvement: float | None = None
     saved_to: str | None = None
     loaded_from: str | None = None
-
-    def __repr__(self) -> str:
-        if self.loaded_from:
-            return f"RunResult(loaded_from={self.loaded_from!r})"
-        return (
-            f"RunResult(baseline={self.baseline}, optimized={self.optimized}, "
-            f"improvement={self.improvement}, saved_to={self.saved_to!r})"
-        )
-
-
-class RunResult:
-    """Result returned by AutoGEPA.run().
-
-    Attributes are ``None`` when the result was loaded from an existing saved
-    model rather than freshly trained.
-    """
-
-    def __init__(
-        self,
-        baseline: float | None,
-        optimized: float | None,
-        improvement: float | None,
-        saved_to: str | None,
-        loaded_from: str | None,
-    ):
-        self.baseline = baseline
-        self.optimized = optimized
-        self.improvement = improvement
-        self.saved_to = saved_to
-        self.loaded_from = loaded_from
 
     def __repr__(self) -> str:
         if self.loaded_from:
