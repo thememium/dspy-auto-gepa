@@ -28,7 +28,5 @@ class AutoGEPAConfig:
             self.metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
         if self.reflection_lm is None:
             self.reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
-        if self.metric_lm is None:
-            self.metric_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
-        if self.reflection_lm is None:
-            self.reflection_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
+
+
