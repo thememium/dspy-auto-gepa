@@ -51,6 +51,29 @@ auto = AutoGEPA(
     reflection_lm=large_lm,
 )
 
+results = auto.run(
+    rows=rows,
+    module=program,
+    name="TicketSignature",
+    force=False,  # Set True to re-run even if a saved model exists
+)
+
+# Check if a cached model was loaded
+if results.get("loaded_from"):
+    print(f"Loaded existing model from {results['loaded_from']}")
+else:
+    print(f"Baseline score: {results['baseline']:.4f}")
+    print(f"Optimized score: {results['optimized']:.4f}")
+    print(f"Improvement: {results['improvement']:.4f}")
+    print(f"Saved optimized program to {results['saved_to']}")
+```
+
+### Advanced: step-by-step control
+
+If you prefer fine-grained control over each stage, you can call the individual
+methods that `run()` orchestrates under the hood:
+
+```python
 prepared = auto.prepare(rows=rows, module=program, name="TicketSignature")
 
 baseline = auto.run_baseline(module=program, prepared=prepared)
@@ -83,8 +106,12 @@ auto.promote(
   - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
   - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
   - `num_threads: int = 16`
+- `AutoGEPA.run(rows, module, name=None, force=False)` → dict with results
+  - Orchestrates the full pipeline: prepare → baseline → train → compare → promote.
+  - If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training.
+  - Returns a dict with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached).
 - `AutoGEPA.prepare(rows, module, name=None, force=False)` → `PreparedRun`
-  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`. Pass a meaningful name (e.g., `"TicketSignature"`) for readable folders.
+  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`.
   - `force=True` overwrites an existing metric file
 - `AutoGEPA.run_baseline(module, prepared)` → baseline scores
 - `AutoGEPA.train(module, prepared)` → optimized module
