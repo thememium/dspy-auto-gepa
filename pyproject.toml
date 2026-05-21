@@ -3,20 +3,46 @@ name = "dspy-auto-gepa"
 version = "0.1.5"
 description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
-authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
 requires-python = ">=3.12"
+authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
+keywords = [
+  "dspy",
+  "ai",
+  "gepa",
+  "optimizer",
+  "orchestration",
+  "optimization",
+]
+classifiers = [
+  "Operating System :: OS Independent",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "dspy>=3.2.1",
     "pandas>=3.0.3",
     "pydantic>=2.13.4",
 ]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
 
-[project.scripts]
-dspy-auto-gepa = "dspy_auto_gepa:main"
+[project.urls]
+Homepage = "https://github.com/thememium/dspy-auto-gepa"
+Documentation = "https://github.com/thememium/dspy-auto-gepa"
+Repository = "https://github.com/thememium/dspy-auto-gepa.git"
+Issues = "https://github.com/thememium/dspy-auto-gepa/issues"
+Changelog = "https://github.com/thememium/dspy-auto-gepa/blob/master/CHANGELOG.md"
 
 [build-system]
 requires = ["uv_build>=0.11.6,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dspy_auto_gepa*"]
 
 [dependency-groups]
 dev = [
