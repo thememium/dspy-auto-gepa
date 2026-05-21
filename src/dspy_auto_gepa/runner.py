@@ -36,8 +36,6 @@ class PreparedRun:
 
 
 class RunResult(BaseModel):
-    """Result returned by AutoGEPA.run()."""
-
     baseline: float | None = None
     optimized: float | None = None
     improvement: float | None = None
@@ -176,6 +174,39 @@ class AutoGEPA:
             metric_file=metric_file,
             run_dir=run_dir,
         )
+
+    def build_metric(
+        self,
+        *,
+        rows: Any | None = None,
+        module: dspy.Module | None = None,
+        name: str | None = None,
+        metric: Path | str | None = None,
+        force: bool = False,
+    ) -> Path:
+        task_rows, task_module, task_name, task_metric = self._resolve_task(
+            rows, module, name, metric
+        )
+
+        if task_metric is not None:
+            return task_metric
+
+        run_dir = self._run_dir(task_name)
+        metric_file = run_dir / "metric.py"
+
+        if metric_file.exists() and not force:
+            return metric_file
+
+        generate_metric_file(
+            input_fields=self.config.input_fields,
+            output_fields=self.config.output_fields,
+            sample_rows=task_rows,
+            module=task_module,
+            out_path=metric_file,
+            metric_lm=self.config.metric_lm,
+        )
+
+        return metric_file
 
     def run_baseline(
         self,

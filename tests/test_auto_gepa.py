@@ -255,3 +255,45 @@ def test_to_dicts_list_of_dicts():
 def test_to_dicts_unsupported():
     with pytest.raises(TypeError):
         _to_dicts("not a dataframe")
+
+
+def test_build_metric_generates_file(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+    module = DummyModule()
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="TestBuildMetric",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+    )
+
+    with patch("dspy_auto_gepa.runner.generate_metric_file") as mock_generate:
+        metric_file = auto.build_metric()
+
+        mock_generate.assert_called_once()
+    assert metric_file == tmp_path / "TestBuildMetric" / "metric.py"
+
+
+def test_build_metric_returns_custom_path(tmp_path: Path) -> None:
+    custom_metric = tmp_path / "custom_metric.py"
+    custom_metric.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
+
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+    module = DummyModule()
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="TestBuildMetricCustom",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+    )
+
+    metric_file = auto.build_metric(metric=custom_metric)
+    assert metric_file == custom_metric

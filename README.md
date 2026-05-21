@@ -72,6 +72,11 @@ If you prefer fine-grained control over each stage, you can call the individual
 methods that `run()` orchestrates under the hood:
 
 ```python
+# Optional: generate the metric file first for human inspection
+metric_file = auto.build_metric()
+print(f"Metric written to {metric_file}")
+# After reviewing, proceed:
+
 prepared = auto.prepare()
 
 baseline = auto.run_baseline(prepared=prepared)
@@ -107,6 +112,14 @@ auto.promote(
   - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
   - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
   - `num_threads: int = 16`
+- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, force=False)` → `Path`
+  - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
+  - Returns the path to the generated metric file.
+  - Use `force=True` to overwrite an existing generated metric.
+- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, force=False)` → `Path`
+  - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
+  - Returns the path to the generated metric file.
+  - Use `force=True` to overwrite an existing generated metric.
 - `AutoGEPA.run(rows=None, module=None, name=None, metric=None, force=False)` → `RunResult`
   - Orchestrates the full pipeline: prepare → baseline → train → compare → promote.
   - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
