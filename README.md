@@ -92,9 +92,9 @@ rows = [
 
 # Fields are automatically inferred from the module's signature
 auto = AutoGEPA(
+    name="TicketSignature-v1_0_0",
     rows=rows,
     module=program,
-    name="TicketSignature",
     metric_lm=large_lm,
     reflection_lm=large_lm,
 )
