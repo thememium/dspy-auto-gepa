@@ -157,7 +157,8 @@ class MetricSpecGenerator(dspy.Signature):
         predicted_answer: str = dspy.InputField()
         quality_score: float = dspy.OutputField(
             desc="Quality score from 0.0 to 1.0",
-            json_schema_extra={"ge": 0.0, "le": 1.0},
+            ge=0.0,
+            le=1.0,
         )
         critique: str = dspy.OutputField(desc="Specific critique explaining quality issues and what good looks like")
 
