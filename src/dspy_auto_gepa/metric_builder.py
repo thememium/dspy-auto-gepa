@@ -146,6 +146,7 @@ class MetricSpecGenerator(dspy.Signature):
     (shows dspy.ChainOfThought judge setup with fallback on failure):
 
     import dspy
+    from pydantic import Field
 
     # Use the user's configured LM, or fall back to a lightweight default
     _judge_lm = dspy.LM("openrouter/openai/gpt-oss-120b")
@@ -154,7 +155,10 @@ class MetricSpecGenerator(dspy.Signature):
     class JudgeSignature(dspy.Signature):
         gold_answer: str = dspy.InputField()
         predicted_answer: str = dspy.InputField()
-        quality_score: float = dspy.OutputField(desc="Quality score from 0.0 to 1.0")
+        quality_score: float = dspy.OutputField(
+            desc="Quality score from 0.0 to 1.0",
+            json_schema_extra={"ge": 0.0, "le": 1.0},
+        )
         critique: str = dspy.OutputField(desc="Specific critique explaining quality issues and what good looks like")
 
     _judge_program = dspy.ChainOfThought(JudgeSignature)
