@@ -8,6 +8,7 @@ import pytest
 from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
 from dspy_auto_gepa.data import _apply_mapping, _to_dicts, split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
+from dspy_auto_gepa.runner import RunResult
 
 
 class TicketSignature(dspy.Signature):
@@ -145,8 +146,26 @@ def test_run_force_retrains(tmp_path: Path) -> None:
         artifact_dir=artifact_dir,
     )
 
-    with pytest.raises(Exception):
-        auto.run(force=True)
+    with patch.object(module, "load") as mock_load:
+        with patch.object(auto, "train") as mock_train:
+            with patch.object(auto, "compare") as mock_compare:
+                with patch.object(auto, "promote") as mock_promote:
+                    mock_train.return_value = module
+                    mock_compare.return_value = RunResult(
+                        baseline=0.5, optimized=0.8, improvement=0.3
+                    )
+
+                    result = auto.run(force=True)
+
+                    mock_load.assert_not_called()
+                    mock_train.assert_called_once()
+                    mock_compare.assert_called_once()
+                    mock_promote.assert_called_once()
+
+    assert result.loaded_from is None
+    assert result.baseline == 0.5
+    assert result.optimized == 0.8
+    assert result.improvement == 0.3
 
 
 def test_to_examples():
@@ -351,7 +370,8 @@ def test_infer_fields_from_module_signature(tmp_path: Path) -> None:
         artifact_dir=tmp_path,
     )
 
-    ds = auto.datasets()
+    with patch("dspy_auto_gepa.runner.generate_metric_file"):
+        ds = auto.datasets()
     assert len(ds.train) >= 1
 
 
@@ -372,7 +392,8 @@ def test_infer_fields_with_dict_mapping(tmp_path: Path) -> None:
         output_fields={"urg": "urgency", "sent": "sentiment"},
     )
 
-    ds = auto.datasets()
+    with patch("dspy_auto_gepa.runner.generate_metric_file"):
+        ds = auto.datasets()
     assert len(ds.train) >= 1
     all_msgs = [ex.message for ex in ds.train + ds.val + ds.test]
     assert "hello" in all_msgs

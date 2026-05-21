@@ -29,6 +29,11 @@ dev = [
   "usechange>=0.1.28",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*prefix.*:DeprecationWarning:dspy.*",
+]
+
 [tool.deptry]
 known_first_party = ["dspy_auto_gepa"]
 per_rule_ignores = { DEP002 = ["pandas"] }

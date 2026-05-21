@@ -5,15 +5,12 @@ import dspy
 from dspy_auto_gepa import AutoGEPA
 
 metric_lm = dspy.LM(
-    "openrouter/openai/gpt-oss-120b",
+    "openrouter/openai/gpt-oss-20b",
     extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
-    # cache=False,
+    cache=False,
 )
 
-teacher_lm = dspy.LM(
-    model="openrouter/moonshotai/kimi-k2.5",
-    # cache=False
-)
+teacher_lm = dspy.LM(model="openrouter/moonshotai/kimi-k2.5", cache=False)
 
 dspy.configure(lm=metric_lm)
 
@@ -45,18 +42,17 @@ rows = [
 
 
 def main() -> None:
+    name = "TicketSignature-v1_0_0"
 
     auto = AutoGEPA(
+        name=name,
         rows=rows,
         module=program,
-        name="TicketSignature",
         metric_lm=teacher_lm,
         reflection_lm=teacher_lm,
     )
 
-    model_path = (
-        auto.config.artifact_dir / "TicketSignature" / "optimized_TicketSignature.json"
-    )
+    model_path = auto.config.artifact_dir / name / f"optimized_{name}.json"
 
     force = False
     if model_path.exists():

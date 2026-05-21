@@ -289,13 +289,18 @@ class AutoGEPA:
                 "module must be provided either to the constructor or to train()"
             )
 
+        log_dir = (
+            str(self._run_dir / "gepa_logs")
+            if self._run_dir is not None
+            else str(self.config.artifact_dir / "gepa_logs")
+        )
         optimizer = dspy.GEPA(
             metric=self.load_metric(),
             auto=self.config.gepa_auto,
             reflection_lm=self.config.reflection_lm,
             num_threads=self.config.num_threads,
             track_stats=True,
-            log_dir=str(self.config.artifact_dir / "gepa_logs"),
+            log_dir=log_dir,
         )
 
         optimized = optimizer.compile(
