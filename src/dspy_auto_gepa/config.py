@@ -9,8 +9,8 @@ from .metric_builder import MetricSpecGenerator
 
 @dataclass
 class AutoGEPAConfig:
-    input_fields: list[str]
-    output_fields: list[str]
+    input_fields: list[str] | None = None
+    output_fields: list[str] | None = None
     split: tuple[float, ...] = (0.7, 0.2, 0.1)
     seed: int = 42
     artifact_dir: Path = field(default_factory=lambda: Path(".auto_gepa"))
@@ -22,8 +22,6 @@ class AutoGEPAConfig:
     metric_generator_module: Any = None
 
     def __post_init__(self) -> None:
-        if not self.input_fields or not self.output_fields:
-            raise ValueError("input_fields and output_fields must be non-empty")
         if sum(self.split) > 1.0:
             raise ValueError("split proportions must sum to <= 1.0")
         if self.gepa_auto not in ("light", "medium", "heavy"):
