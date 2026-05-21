@@ -77,22 +77,22 @@ metric_file = auto.build_metric()
 print(f"Metric written to {metric_file}")
 # After reviewing, proceed:
 
-prepared = auto.prepare()
+ds = auto.datasets()
 
-baseline = auto.run_baseline(prepared=prepared)
+baseline = auto.run_baseline(datasets=ds)
 
-optimized = auto.train(prepared=prepared)
+optimized = auto.train(datasets=ds)
 
-final = auto.run_baseline(module=optimized, prepared=prepared)
+final = auto.run_baseline(module=optimized, datasets=ds)
 
 # Or compare and promote
 comparison = auto.compare(
     optimized_module=optimized,
-    prepared=prepared,
+    datasets=ds,
 )
 auto.promote(
     optimized_module=optimized,
-    destination=prepared.run_dir / "optimized_ticket_classifier.json",
+    destination=auto._run_dir / "optimized_ticket_classifier.json",
 )
 ```
 
@@ -116,29 +116,24 @@ auto.promote(
   - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
   - Returns the path to the generated metric file.
   - Use `force=True` to overwrite an existing generated metric.
-- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, force=False)` → `Path`
-  - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
-  - Returns the path to the generated metric file.
-  - Use `force=True` to overwrite an existing generated metric.
 - `AutoGEPA.run(rows=None, module=None, name=None, metric=None, force=False)` → `RunResult`
-  - Orchestrates the full pipeline: prepare → baseline → train → compare → promote.
+  - Orchestrates the full pipeline: datasets → baseline → train → compare → promote.
   - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
   - If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training.
   - Returns a `RunResult` with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached).
-- `AutoGEPA.prepare(rows=None, module=None, name=None, metric=None, force=False)` → `PreparedRun`
+- `AutoGEPA.datasets(rows=None, module=None, name=None, metric=None, force=False)` → `Datasets`
   - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
   - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`.
   - `force=True` overwrites an existing metric file
-- `AutoGEPA.run_baseline(module=None, prepared)` → baseline scores
+- `AutoGEPA.run_baseline(module=None, datasets)` → baseline scores
   - Uses `module` from the constructor if not overridden.
-- `AutoGEPA.train(module=None, prepared)` → optimized module
+- `AutoGEPA.train(module=None, datasets)` → optimized module
   - Uses `module` from the constructor if not overridden.
-- `AutoGEPA.compare(optimized_module, prepared, baseline_module=None)` → side-by-side scores
+- `AutoGEPA.compare(optimized_module, datasets, baseline_module=None)` → side-by-side scores
   - Uses `module` from the constructor as `baseline_module` if not overridden.
 - `AutoGEPA.promote(optimized_module, destination)` → save optimized program
-- `PreparedRun.metric()` → lazily loads the generated metric
-- `PreparedRun.train` / `PreparedRun.val` / `PreparedRun.test` → dataset splits
-- `PreparedRun.run_dir` → artifact folder for this run
+- `AutoGEPA.load_metric()` → lazily loads the generated metric
+- `Datasets.train` / `Datasets.val` / `Datasets.test` → dataset splits
 
 ## License
 

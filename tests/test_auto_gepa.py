@@ -94,7 +94,7 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
     run_dir = artifact_dir / task_name
     run_dir.mkdir(parents=True)
 
-    # Create dummy metric file so prepare() skips generation
+    # Create dummy metric file so datasets() skips generation
     metric_file = run_dir / "metric.py"
     metric_file.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
 
@@ -130,7 +130,7 @@ def test_run_force_retrains(tmp_path: Path) -> None:
     run_dir = artifact_dir / task_name
     run_dir.mkdir(parents=True)
 
-    # Create dummy metric file so prepare() skips generation
+    # Create dummy metric file so datasets() skips generation
     metric_file = run_dir / "metric.py"
     metric_file.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
 
@@ -212,8 +212,8 @@ def test_prepare_uses_custom_metric_path(tmp_path: Path) -> None:
         artifact_dir=tmp_path,
     )
 
-    prepared = auto.prepare(metric=custom_metric)
-    assert prepared.metric_file == custom_metric
+    auto.datasets(metric=custom_metric)
+    assert auto._metric_file == custom_metric
 
 
 def test_prepare_uses_constructor_metric(tmp_path: Path) -> None:
@@ -233,8 +233,8 @@ def test_prepare_uses_constructor_metric(tmp_path: Path) -> None:
         artifact_dir=tmp_path,
     )
 
-    prepared = auto.prepare()
-    assert prepared.metric_file == custom_metric
+    auto.datasets()
+    assert auto._metric_file == custom_metric
 
 
 def test_to_dicts_pandas_dataframe():
