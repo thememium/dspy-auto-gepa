@@ -1,6 +1,6 @@
 [project]
 name = "dspy-auto-gepa"
-version = "0.1.2"
+version = "0.1.3"
 description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]

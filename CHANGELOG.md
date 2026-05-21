@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.1.3 (2026-05-21)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.2...v0.1.3)
+
+### 🚀 Enhancements
+
+- **dspy_auto_gepa**: support dataframe‑like rows input ([54d3414](https://github.com/thememium/dspy-auto-gepa/commit/54d34144539b41db2882e57c34113e217282f46c))
+- **auto_gepa**: add support for custom metric file path ([2e284dc](https://github.com/thememium/dspy-auto-gepa/commit/2e284dcaa3c8ea71a429c91b7c339ee2916abe13))
+- **example.py**: add interactive force prompt when model exists and remove CLI flag ([b1ab068](https://github.com/thememium/dspy-auto-gepa/commit/b1ab0689933c20f7599442805e194ca3da733329))
+- **main**: add force flag and refactor execution logic ([ff81ccb](https://github.com/thememium/dspy-auto-gepa/commit/ff81ccbd26a12e0f9390c747e45ec25cc0652574))
+- **auto_gepa/runner**: add run method and task name support ([094c6d5](https://github.com/thememium/dspy-auto-gepa/commit/094c6d506b40fa39ee0859d75224db7f6aaeaf0c))
+
+### 💅 Refactors
+
+- **example.py**: adjust AutoGEPA API usage ([53f1706](https://github.com/thememium/dspy-auto-gepa/commit/53f1706fd4e6b24ef81e96f1c737cbd2e8b1dbc6))
+- **auto_gepa/runner.py**: make rows and module optional and add task resolver ([2d1adc7](https://github.com/thememium/dspy-auto-gepa/commit/2d1adc77e1d1b64a4a6b2fc17e8faa8c98f0710c))
+- **example.py**: separate metric and teacher LM definitions ([3e12c95](https://github.com/thememium/dspy-auto-gepa/commit/3e12c95c355c5698c38d123f6be20c1ada72b82a))
+- simplify RunResult definition and imports in runner.py ([3f8a3a9](https://github.com/thememium/dspy-auto-gepa/commit/3f8a3a950aaed3564cbec39ddb529d7adaddf649))
+- **example.py**: change result attribute access to dot notation ([b433713](https://github.com/thememium/dspy-auto-gepa/commit/b4337135447ef354b8295265584064d9d49c2d38))
+- **run**: add RunResult model and update AutoGEPA.run to return it ([122fc45](https://github.com/thememium/dspy-auto-gepa/commit/122fc45d4f34d6c69458198f245f4dc429d4726e))
+
+### 📖 Documentation
+
+- add metric parameter to AutoGEPA.run and AutoGEPA.prepare ([82da5c7](https://github.com/thememium/dspy-auto-gepa/commit/82da5c75e430dba9254a5efbfdbb25e5f5711e98))
+- **README**: clarify AutoGEPA API and examples ([22c769d](https://github.com/thememium/dspy-auto-gepa/commit/22c769dfe5de69a94c35e829b158c583c9d5bf49))
+- **readme**: update example code to use attribute access for result values ([fb03691](https://github.com/thememium/dspy-auto-gepa/commit/fb03691f70732173fbcf207ba6028d050960eb4a))
+- **README**: add run() usage examples and step-by-step control ([9426fb5](https://github.com/thememium/dspy-auto-gepa/commit/9426fb57982e06d39a38557d52c17dd8cd68f1ce))
+
+### 🏡 Chore
+
+- **deps**: add pydantic dependency for data validation ([189f9dd](https://github.com/thememium/dspy-auto-gepa/commit/189f9ddf5670d75170a4b84bb2022691fa192dd9))
+
+### ✅ Tests
+
+- **auto-gepa**: add tests for constructor state and simplified run ([584cb51](https://github.com/thememium/dspy-auto-gepa/commit/584cb515a661cec6689b8dbcdc0714b959857ac0))
+- **test_auto_gepa**: replace MagicMock with patch.object for module.load ([759b4e2](https://github.com/thememium/dspy-auto-gepa/commit/759b4e2ddf228c80c861b48ca4a7f3f8370cfb80))
+- **auto-gepa**: change test to use result attributes instead of dict keys ([56d3f22](https://github.com/thememium/dspy-auto-gepa/commit/56d3f22da85c4e765609f5dddbc8e3761ce70608))
+- **test_auto_gepa.py**: add tests for model loading and force flag handling ([47453af](https://github.com/thememium/dspy-auto-gepa/commit/47453af12a2e7acdc1b8b0fa7cb11394c0507ffa))
+
+### Other Changes
+
+- Merge pull request #1 from thememium/eboswell/feat/simplified-runner (#1) ([0470c18](https://github.com/thememium/dspy-auto-gepa/commit/0470c1874353e34996f5f7062e2e87c32230a3b1))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.2 (2026-05-20)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.1...v0.1.2)
