@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.1.4 (2026-05-21)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.3...v0.1.4)
+
+### 🚀 Enhancements
+
+- **auto-gepa**: add field inference and mapping support ([5adea50](https://github.com/thememium/dspy-auto-gepa/commit/5adea503d69c0d6d3e6d0989e8e04287d4f673bd))
+- **runner**: allow custom metric generator config and out_path support ([22a0814](https://github.com/thememium/dspy-auto-gepa/commit/22a0814a96ccee7a9ac73c522b9e5cae38e66858))
+- **AutoGEPA**: add build_metric method ([97f89ec](https://github.com/thememium/dspy-auto-gepa/commit/97f89ec8d9e975ccb8dfc5d969e1385eaf18b688))
+
+### 💅 Refactors
+
+- **data**: handle missing signature in wrapped modules ([b9f1028](https://github.com/thememium/dspy-auto-gepa/commit/b9f1028bd63b2ae6ef15125360a8a208b21831db))
+- **example.py**: move LM definitions out of main ([587c03d](https://github.com/thememium/dspy-auto-gepa/commit/587c03df0b67d79164902ca198448613b40b325b))
+- **dspy_auto_gepa**: allow flexible field mapping for inputs/outputs ([6a948c0](https://github.com/thememium/dspy-auto-gepa/commit/6a948c029e86fc06c788154b9f9912788337eb3d))
+- **data.py**: add inference and mapping helpers for DSPy modules ([a93e288](https://github.com/thememium/dspy-auto-gepa/commit/a93e288b8199a88a063a3f63ad4d45e59a5323fc))
+- **config**: make input_fields and output_fields optional and remove required validation ([93908aa](https://github.com/thememium/dspy-auto-gepa/commit/93908aabb44e0a3e859c9137f99f193690b47785))
+- **datasets**: rename PreparedRun to Datasets and update API ([73958fd](https://github.com/thememium/dspy-auto-gepa/commit/73958fd788cb05c46b744fb786001dbc712bb613))
+
+### 📖 Documentation
+
+- add bug report issue template ([c22616c](https://github.com/thememium/dspy-auto-gepa/commit/c22616cbfa618a32f2865142b6fa4bcc3fc8570c))
+- add contributing guide ([71ff8d5](https://github.com/thememium/dspy-auto-gepa/commit/71ff8d5bde30f36617cc9575c8fc6ac5da85ceb4))
+- **SECURITY**: add vulnerability reporting and security best practices ([78fd61c](https://github.com/thememium/dspy-auto-gepa/commit/78fd61ca3ad12f797f380dca9fc7a6674f5b757a))
+- **README**: revamp and reorganize project documentation ([08d7b98](https://github.com/thememium/dspy-auto-gepa/commit/08d7b98fbc90c4a76aaac3c075ca7bd83155ecbd))
+- **readme**: add model configuration section and simplify ticket rows ([3aee51c](https://github.com/thememium/dspy-auto-gepa/commit/3aee51c10f86883005d1a2a16f36a9c527ac19bd))
+- **README**: remove the explicit list fields example ([e62c95d](https://github.com/thememium/dspy-auto-gepa/commit/e62c95ddb2768c515967605dc000be383b4419a2))
+- **README**: add field inference and mapping docs, update API section ([4859c02](https://github.com/thememium/dspy-auto-gepa/commit/4859c027b4b200d9bc721438d35d2563dbac2e9e))
+- add dict mapping section and update examples for column mismatches ([afa7a7c](https://github.com/thememium/dspy-auto-gepa/commit/afa7a7c5a36b411389b05363dfa6d291c0a35d24))
+- add advanced, basic, and medium usage guides ([340883a](https://github.com/thememium/dspy-auto-gepa/commit/340883aaeaf5b9b03bdc5fee85a4ea6e1a308f2a))
+
+### 🏡 Chore
+
+- add MIT license file ([98f0055](https://github.com/thememium/dspy-auto-gepa/commit/98f005579978c7f864b73267b346d9f64cb3c6c4))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.3 (2026-05-21)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.2...v0.1.3)
