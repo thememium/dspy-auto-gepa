@@ -4,6 +4,19 @@ import dspy
 
 from dspy_auto_gepa import AutoGEPA
 
+metric_lm = dspy.LM(
+    "openrouter/openai/gpt-oss-120b",
+    extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
+    # cache=False,
+)
+
+teacher_lm = dspy.LM(
+    model="openrouter/moonshotai/kimi-k2.5",
+    # cache=False
+)
+
+dspy.configure(lm=metric_lm)
+
 
 class TicketSignature(dspy.Signature):
     """Classify support tickets."""
@@ -32,25 +45,11 @@ rows = [
 
 
 def main() -> None:
-    metric_lm = dspy.LM(
-        "openrouter/openai/gpt-oss-120b",
-        extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
-        # cache=False,
-    )
-
-    teacher_lm = dspy.LM(
-        model="openrouter/moonshotai/kimi-k2.5",
-        # cache=False
-    )
-
-    dspy.configure(lm=metric_lm)
 
     auto = AutoGEPA(
         rows=rows,
         module=program,
         name="TicketSignature",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         metric_lm=teacher_lm,
         reflection_lm=teacher_lm,
     )
