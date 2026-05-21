@@ -96,24 +96,6 @@ auto = AutoGEPA(
 results = auto.run()
 ```
 
-### With explicit list fields
-
-If you prefer explicit field lists (old behavior):
-
-```python
-auto = AutoGEPA(
-    rows=rows,
-    module=program,
-    name="TicketSignature",
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
-    metric_lm=large_lm,
-    reflection_lm=large_lm,
-)
-
-results = auto.run()
-```
-
 ### Advanced: step-by-step control
 
 If you prefer fine-grained control over each stage, you can call the individual
