@@ -194,3 +194,44 @@ def test_strip_markdown_fences():
 def test_strip_markdown_fences_no_fences():
     source = "def foo():\n    pass"
     assert _strip_markdown_fences(source) == source
+
+
+def test_prepare_uses_custom_metric_path(tmp_path: Path) -> None:
+    custom_metric = tmp_path / "custom_metric.py"
+    custom_metric.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
+
+    module = DummyModule()
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="CustomMetricTask",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+    )
+
+    prepared = auto.prepare(metric=custom_metric)
+    assert prepared.metric_file == custom_metric
+
+
+def test_prepare_uses_constructor_metric(tmp_path: Path) -> None:
+    custom_metric = tmp_path / "my_metric.py"
+    custom_metric.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
+
+    module = DummyModule()
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        metric=custom_metric,
+        name="CtorMetricTask",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+    )
+
+    prepared = auto.prepare()
+    assert prepared.metric_file == custom_metric

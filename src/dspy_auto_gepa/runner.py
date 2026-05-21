@@ -62,6 +62,7 @@ class AutoGEPA:
         rows: list[dict[str, Any]] | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
+        metric: Path | str | None = None,
         split: tuple[float, ...] = (0.7, 0.2, 0.1),
         seed: int = 42,
         artifact_dir: Path | str = ".auto_gepa",
@@ -73,6 +74,7 @@ class AutoGEPA:
         self.rows = rows
         self.module = module
         self.name = name
+        self.metric = Path(metric) if metric is not None else None
         self.config = AutoGEPAConfig(
             input_fields=input_fields,
             output_fields=output_fields,
@@ -92,13 +94,19 @@ class AutoGEPA:
         rows: list[dict[str, Any]] | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
-    ) -> tuple[list[dict[str, Any]], dspy.Module, str]:
+        metric: Path | str | None = None,
+    ) -> tuple[list[dict[str, Any]], dspy.Module, str, Path | None]:
         resolved_rows = rows if rows is not None else self.rows
         resolved_module = module if module is not None else self.module
         resolved_name = name or self.name
         if resolved_module is not None:
             resolved_name = resolved_name or resolved_module.__class__.__name__
         resolved_name = resolved_name or "UnknownTask"
+        resolved_metric = None
+        if metric is not None:
+            resolved_metric = Path(metric)
+        elif self.metric is not None:
+            resolved_metric = self.metric
 
         if resolved_rows is None:
             raise ValueError(
@@ -109,7 +117,7 @@ class AutoGEPA:
                 "module must be provided either to the constructor or to the method"
             )
 
-        return resolved_rows, resolved_module, resolved_name
+        return resolved_rows, resolved_module, resolved_name, resolved_metric
 
     def _run_dir(self, name: str) -> Path:
         run_dir = self.config.artifact_dir / name
@@ -122,9 +130,12 @@ class AutoGEPA:
         rows: list[dict[str, Any]] | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
+        metric: Path | str | None = None,
         force: bool = False,
     ) -> PreparedRun:
-        task_rows, task_module, task_name = self._resolve_task(rows, module, name)
+        task_rows, task_module, task_name, task_metric = self._resolve_task(
+            rows, module, name, metric
+        )
         run_dir = self._run_dir(task_name)
         self._current_run_dir = run_dir
 
@@ -140,19 +151,22 @@ class AutoGEPA:
             self.config.seed,
         )
 
-        metric_file = run_dir / "metric.py"
-
-        if metric_file.exists() and not force:
-            pass
+        if task_metric is not None:
+            metric_file = task_metric
         else:
-            generate_metric_file(
-                input_fields=self.config.input_fields,
-                output_fields=self.config.output_fields,
-                sample_rows=task_rows,
-                module=task_module,
-                out_path=metric_file,
-                metric_lm=self.config.metric_lm,
-            )
+            metric_file = run_dir / "metric.py"
+
+            if metric_file.exists() and not force:
+                pass
+            else:
+                generate_metric_file(
+                    input_fields=self.config.input_fields,
+                    output_fields=self.config.output_fields,
+                    sample_rows=task_rows,
+                    module=task_module,
+                    out_path=metric_file,
+                    metric_lm=self.config.metric_lm,
+                )
 
         return PreparedRun(
             train=train,
@@ -240,9 +254,12 @@ class AutoGEPA:
         rows: list[dict[str, Any]] | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
+        metric: Path | str | None = None,
         force: bool = False,
     ) -> RunResult:
-        task_rows, task_module, task_name = self._resolve_task(rows, module, name)
+        task_rows, task_module, task_name, task_metric = self._resolve_task(
+            rows, module, name, metric
+        )
         model_path = (
             self.config.artifact_dir / task_name / f"optimized_{task_name}.json"
         )
@@ -255,6 +272,7 @@ class AutoGEPA:
             rows=task_rows,
             module=task_module,
             name=task_name,
+            metric=task_metric,
             force=force,
         )
 
