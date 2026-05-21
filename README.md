@@ -99,6 +99,7 @@ auto.promote(
   - `rows: list[dict[str, Any]] | None = None` — training data
   - `module: dspy.Module | None = None` — the DSPy module to optimize
   - `name: str | None = None` — task name for artifact subdirectory
+  - `metric: Path | str | None = None` — path to a custom metric `.py` file (skips generation)
   - `split: tuple[float, ...] = (0.7, 0.2, 0.1)`
   - `seed: int = 42`
   - `artifact_dir: Path | str = ".auto_gepa"`
@@ -106,13 +107,13 @@ auto.promote(
   - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
   - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
   - `num_threads: int = 16`
-- `AutoGEPA.run(rows=None, module=None, name=None, force=False)` → `RunResult`
+- `AutoGEPA.run(rows=None, module=None, name=None, metric=None, force=False)` → `RunResult`
   - Orchestrates the full pipeline: prepare → baseline → train → compare → promote.
-  - Uses `rows`, `module`, `name` from the constructor if not overridden.
+  - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
   - If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training.
   - Returns a `RunResult` with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached).
-- `AutoGEPA.prepare(rows=None, module=None, name=None, force=False)` → `PreparedRun`
-  - Uses `rows`, `module`, `name` from the constructor if not overridden.
+- `AutoGEPA.prepare(rows=None, module=None, name=None, metric=None, force=False)` → `PreparedRun`
+  - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
   - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`.
   - `force=True` overwrites an existing metric file
 - `AutoGEPA.run_baseline(module=None, prepared)` → baseline scores
