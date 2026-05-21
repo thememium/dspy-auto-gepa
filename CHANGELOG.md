@@ -1,34 +1,24 @@
 # Changelog
 
+## v0.1.6 (2026-05-21)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.5...v0.1.6)
+
+### 🏡 Chore
+
+- **pyproject.toml**: add keywords, classifiers, license, URLs and package find config ([583716a](https://github.com/thememium/dspy-auto-gepa/commit/583716a73ee1df5ad7a78654616ff0b5d8ab491f))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.5 (2026-05-21)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.4...v0.1.5)
 
-### 💅 Refactors
-
-- **example.py**: collapse teacher LM definition and model_path assignment ([9b604f9](https://github.com/thememium/dspy-auto-gepa/commit/9b604f9ccd1a61d802bbc8ee724f02ffa44a6395))
-- **runner.py**: use run_dir for GEPA log directory when available ([9ae226f](https://github.com/thememium/dspy-auto-gepa/commit/9ae226f30ad6b39222869f6c952e0924fd74278a))
-- **example.py**: update model configs and introduce name variable ([ca510a0](https://github.com/thememium/dspy-auto-gepa/commit/ca510a00167e71aaf7b6967f6bfdc8b7e267b4f4))
-- **metric_builder**: rename loop variable from l to line for clearer intent ([2789bec](https://github.com/thememium/dspy-auto-gepa/commit/2789bec5a07b74e102225339b15d1bdd789d137e))
-- **metric_builder**: use ge and le instead of json_schema_extra ([2a66148](https://github.com/thememium/dspy-auto-gepa/commit/2a6614850174e6082ae4a2378029d5348a1e5487))
-- **metric_builder**: add JSON schema constraints to quality_score field ([0cf780e](https://github.com/thememium/dspy-auto-gepa/commit/0cf780e6ff087e4d0e1669f0e15bdc0abca7cc5f))
-- **metric_builder**: enforce GEPA metric contract and add validation ([07f69ee](https://github.com/thememium/dspy-auto-gepa/commit/07f69ee1bd12440a886ed4ef86cc0808df9b8c58))
-
-### 📖 Documentation
-
-- **metric_builder**: add example scenarios for classification, free‑text and LLM‑judge metrics ([d60aa48](https://github.com/thememium/dspy-auto-gepa/commit/d60aa4875be72ff413ccfcacaa5b9835c9c8fed0))
-
 ### 🏡 Chore
 
-- **pytest**: ignore deprecated dspy warnings during testing ([409ccfd](https://github.com/thememium/dspy-auto-gepa/commit/409ccfdf1a3810bfaf8e2c8890132bbca4dd1739))
-
-### ✅ Tests
-
-- **test_auto_gepa**: mock runner methods for force re‑train test and suppress metric file generation ([fa3f82e](https://github.com/thememium/dspy-auto-gepa/commit/fa3f82e5ff03c4e30765562dea9c05c3fddfd5f6))
-
-### Other Changes
-
-- Merge pull request #2 from thememium/eboswell/feat/improved-metric-generation (#2) ([900d98a](https://github.com/thememium/dspy-auto-gepa/commit/900d98a74d38ff0286bd66907f68971f064671c9))
+- **pyproject.toml**: add keywords, classifiers, license, URLs and package find config ([583716a](https://github.com/thememium/dspy-auto-gepa/commit/583716a73ee1df5ad7a78654616ff0b5d8ab491f))
 
 ### Contributors
 
