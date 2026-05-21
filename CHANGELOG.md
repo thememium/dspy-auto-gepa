@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.7 (2026-05-21)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.6...v0.1.7)
+
+### 🚀 Enhancements
+
+- **dspy-auto-gepa**: expose __version__ and add smoke tests ([b89d1d8](https://github.com/thememium/dspy-auto-gepa/commit/b89d1d8f8fdd08bde97d2a59a584abbe6105c8cd))
+
+### 🤖 CI
+
+- add workflow to publish Python package on release ([50c4b09](https://github.com/thememium/dspy-auto-gepa/commit/50c4b09896cf4a9f8ec8e93e8c5418a9a57c01d8))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.6 (2026-05-21)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.5...v0.1.6)
