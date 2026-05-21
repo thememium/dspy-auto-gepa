@@ -257,7 +257,7 @@ def _validate_metric_source(source: str) -> None:
     visitor = DictReturnVisitor()
     visitor.visit(tree)
     if visitor.dict_returns:
-        lines = ", ".join(str(l) for l in visitor.dict_returns)
+        lines = ", ".join(str(line) for line in visitor.dict_returns)
         raise ValueError(
             f"Generated metric returns a dict on line(s) {lines}. "
             "GEPA metrics must return dspy.Prediction(score=..., feedback=...), "
