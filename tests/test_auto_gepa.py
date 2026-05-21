@@ -6,13 +6,22 @@ import dspy
 import pytest
 
 from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
-from dspy_auto_gepa.data import _to_dicts, split_examples, to_examples
+from dspy_auto_gepa.data import _apply_mapping, _to_dicts, split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
+
+
+class TicketSignature(dspy.Signature):
+    """Classify support tickets."""
+
+    message: str = dspy.InputField()
+    urgency: str = dspy.OutputField()
+    sentiment: str = dspy.OutputField()
 
 
 class DummyModule(dspy.Module):
     def __init__(self):
         super().__init__()
+        self.signature = TicketSignature
 
     def forward(self, message: str) -> dspy.Prediction:
         return dspy.Prediction(urgency="low", sentiment="neutral")
@@ -26,11 +35,6 @@ def test_config_defaults():
     assert cfg.split == (0.7, 0.2, 0.1)
     assert cfg.seed == 42
     assert cfg.gepa_auto == "light"
-
-
-def test_config_validation_empty_fields():
-    with pytest.raises(ValueError):
-        AutoGEPAConfig(input_fields=[], output_fields=["b"])
 
 
 def test_config_validation_bad_split():
@@ -61,8 +65,9 @@ def test_flat_autogepa_constructor():
         gepa_auto="medium",
         num_threads=4,
     )
-    assert auto.config.input_fields == ["message"]
-    assert auto.config.output_fields == ["label"]
+    assert auto.config.input_fields is None  # stored on _raw_*, not config
+    assert auto._raw_input_fields == ["message"]
+    assert auto._raw_output_fields == ["label"]
     assert auto.config.split == (0.8, 0.1, 0.1)
     assert auto.config.seed == 123
     assert auto.config.gepa_auto == "medium"
@@ -80,8 +85,6 @@ def test_autogepa_stores_rows_module_name():
         rows=rows,
         module=module,
         name="TestTask",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
     )
     assert auto.rows is rows
     assert auto.module is module
@@ -94,11 +97,9 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
     run_dir = artifact_dir / task_name
     run_dir.mkdir(parents=True)
 
-    # Create dummy metric file so datasets() skips generation
     metric_file = run_dir / "metric.py"
     metric_file.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
 
-    # Create dummy saved model
     model_path = run_dir / f"optimized_{task_name}.json"
     model_path.write_text('{"version": "1.0"}')
 
@@ -109,8 +110,6 @@ def test_run_loads_existing_model(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name=task_name,
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=artifact_dir,
     )
 
@@ -130,11 +129,9 @@ def test_run_force_retrains(tmp_path: Path) -> None:
     run_dir = artifact_dir / task_name
     run_dir.mkdir(parents=True)
 
-    # Create dummy metric file so datasets() skips generation
     metric_file = run_dir / "metric.py"
     metric_file.write_text("def metric(example, pred, trace=None):\n    return 1.0\n")
 
-    # Create dummy saved model
     model_path = run_dir / f"optimized_{task_name}.json"
     model_path.write_text('{"version": "1.0"}')
 
@@ -145,14 +142,9 @@ def test_run_force_retrains(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name=task_name,
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=artifact_dir,
     )
 
-    # force=True should bypass the load and attempt training
-    # Since we don't have a real LLM, this will fail at train()
-    # but it proves the force flag works to skip loading
     with pytest.raises(Exception):
         auto.run(force=True)
 
@@ -207,8 +199,6 @@ def test_prepare_uses_custom_metric_path(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name="CustomMetricTask",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
     )
 
@@ -228,8 +218,6 @@ def test_prepare_uses_constructor_metric(tmp_path: Path) -> None:
         module=module,
         metric=custom_metric,
         name="CtorMetricTask",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
     )
 
@@ -258,8 +246,6 @@ def test_to_dicts_unsupported():
 
 
 def test_build_metric_generates_file(tmp_path: Path) -> None:
-    from unittest.mock import patch
-
     rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
     module = DummyModule()
 
@@ -267,8 +253,6 @@ def test_build_metric_generates_file(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name="TestBuildMetric",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
     )
 
@@ -290,8 +274,6 @@ def test_build_metric_returns_custom_path(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name="TestBuildMetricCustom",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
     )
 
@@ -300,8 +282,6 @@ def test_build_metric_returns_custom_path(tmp_path: Path) -> None:
 
 
 def test_build_metric_with_out_path(tmp_path: Path) -> None:
-    from unittest.mock import patch
-
     rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
     module = DummyModule()
     custom_out = tmp_path / "my_metric.py"
@@ -310,8 +290,6 @@ def test_build_metric_with_out_path(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name="TestBuildMetricOutPath",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
     )
 
@@ -325,8 +303,6 @@ def test_build_metric_with_out_path(tmp_path: Path) -> None:
 
 
 def test_build_metric_passes_generator_config(tmp_path: Path) -> None:
-    from unittest.mock import patch
-
     rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
     module = DummyModule()
 
@@ -341,8 +317,6 @@ def test_build_metric_passes_generator_config(tmp_path: Path) -> None:
         rows=rows,
         module=module,
         name="TestGeneratorConfig",
-        input_fields=["message"],
-        output_fields=["urgency", "sentiment"],
         artifact_dir=tmp_path,
         metric_generator_signature=CustomMetricSig,
         metric_generator_module=dspy.ChainOfThought,
@@ -354,3 +328,106 @@ def test_build_metric_passes_generator_config(tmp_path: Path) -> None:
         call_kwargs = mock_generate.call_args.kwargs
         assert call_kwargs["metric_generator_signature"] == CustomMetricSig
         assert call_kwargs["metric_generator_module"] == dspy.ChainOfThought
+
+
+# ---- New tests for field inference and mapping ----
+
+
+def test_infer_fields_from_module_signature(tmp_path: Path) -> None:
+    """When no fields are provided, infer from module signature (exact match)."""
+    module = DummyModule()
+    rows = [
+        {"message": "hello", "urgency": "low", "sentiment": "neutral"},
+        {"message": "bye", "urgency": "high", "sentiment": "negative"},
+        {"message": "help", "urgency": "high", "sentiment": "negative"},
+        {"message": "thanks", "urgency": "low", "sentiment": "positive"},
+        {"message": "check", "urgency": "medium", "sentiment": "neutral"},
+    ]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="InferFields",
+        artifact_dir=tmp_path,
+    )
+
+    ds = auto.datasets()
+    assert len(ds.train) >= 1
+
+
+def test_infer_fields_with_dict_mapping(tmp_path: Path) -> None:
+    module = DummyModule()
+    rows = [
+        {"msg": "hello", "urg": "high", "sent": "negative"},
+        {"msg": "bye", "urg": "low", "sent": "positive"},
+        {"msg": "help", "urg": "high", "sent": "negative"},
+    ]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="MappedFields",
+        artifact_dir=tmp_path,
+        input_fields={"msg": "message"},
+        output_fields={"urg": "urgency", "sent": "sentiment"},
+    )
+
+    ds = auto.datasets()
+    assert len(ds.train) >= 1
+    all_msgs = [ex.message for ex in ds.train + ds.val + ds.test]
+    assert "hello" in all_msgs
+    assert "bye" in all_msgs
+
+
+def test_infer_fields_mismatch_raises_error():
+    module = DummyModule()
+    rows = [{"msg": "hello", "urg": "high", "sent": "negative"}]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+    )
+
+    with pytest.raises(ValueError) as exc:
+        auto.datasets()
+
+    assert "Row columns do not match module signature fields" in str(exc.value)
+    assert "Missing from rows" in str(exc.value)
+
+
+def test_apply_mapping():
+    rows = [
+        {"msg": "hello", "urg": "high"},
+        {"msg": "bye", "urg": "low"},
+    ]
+    mapping = {"msg": "message", "urg": "urgency"}
+    result = _apply_mapping(rows, mapping)
+    assert result == [
+        {"message": "hello", "urgency": "high"},
+        {"message": "bye", "urgency": "low"},
+    ]
+
+
+def test_partial_explicit_fields_infer_rest(tmp_path: Path) -> None:
+    module = DummyModule()
+    rows = [
+        {"message": "hello", "urgency": "low", "sentiment": "neutral"},
+        {"message": "bye", "urgency": "high", "sentiment": "negative"},
+        {"message": "help", "urgency": "high", "sentiment": "negative"},
+        {"message": "thanks", "urgency": "low", "sentiment": "positive"},
+        {"message": "check", "urgency": "medium", "sentiment": "neutral"},
+    ]
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="PartialFields",
+        artifact_dir=tmp_path,
+        input_fields=["message"],
+    )
+
+    ds = auto.datasets()
+    assert len(ds.train) >= 1
+    all_msgs = [ex.message for ex in ds.train + ds.val + ds.test]
+    assert "hello" in all_msgs
+    assert "bye" in all_msgs
