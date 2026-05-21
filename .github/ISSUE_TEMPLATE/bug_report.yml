@@ -1,0 +1,92 @@
+name: "Bug report"
+description: Create a report to help us improve
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before You Start...**
+
+        This form is only for submitting bug reports. If you have a usage question
+        or are unsure if this is really a bug, make sure to:
+
+        - Read the [documentation](https://github.com/thememium/dspy-auto-gepa#readme)
+        - Look for existing issues (open and closed) that might answer your question
+        - Ask on [GitHub Discussions](https://github.com/thememium/dspy-auto-gepa/discussions)
+
+        Also try to search for your issue - it may have already been answered or even fixed in the development branch.
+        However, if you find that an old, closed issue still persists in the latest version,
+        you should open a new issue using the form below instead of commenting on the old issue.
+  - type: input
+    id: version
+    attributes:
+      label: dspy-auto-gepa version
+      description: Run `python -c "import dspy_auto_gepa; print(dspy_auto_gepa.__version__)"` to get the version (or check `pyproject.toml`)
+    validations:
+      required: true
+  - type: input
+    id: reproduction-link
+    attributes:
+      label: Link to minimal reproduction
+      description: |
+        Please provide a minimal reproduction of the bug. This could be:
+        - A GitHub repository with the minimal code needed to reproduce the issue
+        - A specific set of commands that trigger the bug
+        - A script or code snippet that demonstrates the problem
+
+        The reproduction should be **minimal** - i.e. it should contain only the bare minimum amount of code needed
+        to show the bug.
+
+        Please do not just fill in a random link. The issue will be closed if no valid reproduction is provided.
+      placeholder: https://github.com/username/repo or steps/commands to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        What do we need to do after opening your repro in order to make the bug happen? Clear and concise reproduction instructions are important for us to be able to triage your issue in a timely manner. Note that you can use [Markdown](https://guides.github.com/features/mastering-markdown/) to format lists and code.
+      placeholder: |
+        1. Import `dspy_auto_gepa` and create an AutoGEPA instance
+        2. Call `auto = AutoGEPA(rows=rows, module=module, name="MyTask")`
+        3. Run `auto.run()`
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What is expected?
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actually-happening
+    attributes:
+      label: What is actually happening?
+      description: Describe what actually happens. Include any error messages if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: system-info
+    attributes:
+      label: System Info
+      description: |
+        Please provide information about your environment:
+        - Python version (`python --version`)
+        - DSPy version (`python -c "import dspy; print(dspy.__version__)"`)
+        - uv version (`uv --version`)
+        - Operating system
+        - Shell (bash, zsh, fish, etc.)
+      render: shell
+      placeholder: |
+        Python: 3.12.0
+        DSPy: 3.1.0
+        uv: 0.5.0
+        OS: macOS 14.0
+        Shell: zsh
+  - type: textarea
+    id: additional-comments
+    attributes:
+      label: Any additional comments?
+      description: e.g. some background/context of how you ran into this bug.
