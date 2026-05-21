@@ -14,6 +14,10 @@ pip install dspy-auto-gepa
 
 ## Usage
 
+### Automatic field inference (recommended)
+
+When your row columns match your module's signature fields, you don't need to specify any field mappings:
+
 ```python
 import dspy
 from dspy_auto_gepa import AutoGEPA
@@ -44,12 +48,11 @@ lm = dspy.LM("openrouter/openai/gpt-oss-120b")
 large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
 dspy.configure(lm=lm)
 
+# Fields are automatically inferred from the module's signature
 auto = AutoGEPA(
     rows=rows,
     module=program,
     name="TicketSignature",
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
     metric_lm=large_lm,
     reflection_lm=large_lm,
 )
@@ -64,6 +67,51 @@ else:
     print(f"Optimized score: {results.optimized:.4f}")
     print(f"Improvement: {results.improvement:.4f}")
     print(f"Saved optimized program to {results.saved_to}")
+```
+
+If your row columns don't match the module's signature fields, AutoGEPA will raise a clear error telling you which fields are missing and suggesting you use dict mappings:
+
+```
+ValueError: Row columns do not match module signature fields. Missing from rows: ['message', 'sentiment', 'urgency']. Extra in rows: ['msg_text', 'sent', 'urg']. Pass input_fields/output_fields to map row columns to signature fields, or ensure row columns match exactly.
+```
+
+### With dict field mappings
+
+When your row columns have different names than your module's signature fields:
+
+```python
+# Row columns: msg_text, urg, sent
+# Signature fields: message, urgency, sentiment
+
+auto = AutoGEPA(
+    rows=rows,
+    module=program,
+    name="TicketSignature",
+    input_fields={"msg_text": "message"},    # row_col → sig_field
+    output_fields={"urg": "urgency", "sent": "sentiment"},
+    metric_lm=large_lm,
+    reflection_lm=large_lm,
+)
+
+results = auto.run()
+```
+
+### With explicit list fields
+
+If you prefer explicit field lists (old behavior):
+
+```python
+auto = AutoGEPA(
+    rows=rows,
+    module=program,
+    name="TicketSignature",
+    input_fields=["message"],
+    output_fields=["urgency", "sentiment"],
+    metric_lm=large_lm,
+    reflection_lm=large_lm,
+)
+
+results = auto.run()
 ```
 
 ### Advanced: step-by-step control
@@ -99,8 +147,8 @@ auto.promote(
 ## API
 
 - `AutoGEPA(...)` — all configuration fields accepted directly in the constructor:
-  - `input_fields: list[str]` — required
-  - `output_fields: list[str]` — required
+  - `input_fields: list[str] | dict[str, str] | None = None` — input field names (list for exact match, dict for column mapping). If not provided, inferred from module signature.
+  - `output_fields: list[str] | dict[str, str] | None = None` — output field names (list for exact match, dict for column mapping). If not provided, inferred from module signature.
   - `rows: Any | None = None` — training data, accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, or any object with `.to_dicts()` or `.to_pandas()`
   - `module: dspy.Module | None = None` — the DSPy module to optimize
   - `name: str | None = None` — task name for artifact subdirectory
@@ -112,8 +160,11 @@ auto.promote(
   - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
   - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
   - `num_threads: int = 16`
-- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, force=False)` → `Path`
+  - `metric_generator_signature: Type[dspy.Signature] | None = None` — custom signature for metric generation
+  - `metric_generator_module: Type[dspy.Module] | None = None` — custom module class for metric generation
+- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, out_path=None, force=False)` → `Path`
   - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
+  - `out_path` overrides the default save location (`.auto_gepa/<name>/metric.py`).
   - Returns the path to the generated metric file.
   - Use `force=True` to overwrite an existing generated metric.
 - `AutoGEPA.run(rows=None, module=None, name=None, metric=None, force=False)` → `RunResult`
@@ -134,6 +185,14 @@ auto.promote(
 - `AutoGEPA.promote(optimized_module, destination)` → save optimized program
 - `AutoGEPA.load_metric()` → lazily loads the generated metric
 - `Datasets.train` / `Datasets.val` / `Datasets.test` → dataset splits
+
+## Field resolution behavior
+
+AutoGEPA resolves fields in this order:
+
+1. **Both provided explicitly** (`list[str] | dict[str, str]`) — uses exactly what you gave it. Lists mean exact column names. Dicts mean `{row_column: signature_field}` mapping.
+2. **Neither provided** — infers both from the module's DSPy Signature. Raises a clear error if row columns don't match signature fields, listing what's missing and what's extra.
+3. **Only one provided** — if the other can be inferred from module signature or remaining row keys, great. If not, raises an error.
 
 ## License
 
