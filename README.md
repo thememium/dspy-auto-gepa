@@ -22,6 +22,11 @@ When your row columns match your module's signature fields, you don't need to sp
 import dspy
 from dspy_auto_gepa import AutoGEPA
 
+# Configure models
+lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
+dspy.configure(lm=lm)
+
 class TicketSignature(dspy.Signature):
     """Classify support tickets."""
     message: str = dspy.InputField()
@@ -31,22 +36,9 @@ class TicketSignature(dspy.Signature):
 program = dspy.ChainOfThought(TicketSignature)
 
 rows = [
-    {
-        "message": "The server room AC is out and equipment is overheating.",
-        "urgency": "high",
-        "sentiment": "negative",
-    },
-    {
-        "message": "Can someone clean conference room B next week?",
-        "urgency": "low",
-        "sentiment": "neutral",
-    },
+    {"message": "The server room AC is out and equipment is overheating.", "urgency": "high", "sentiment": "negative"},
+    {"message": "Can someone clean conference room B next week?", "urgency": "low", "sentiment": "neutral"},
 ]
-
-# Configure models
-lm = dspy.LM("openrouter/openai/gpt-oss-120b")
-large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
-dspy.configure(lm=lm)
 
 # Fields are automatically inferred from the module's signature
 auto = AutoGEPA(
