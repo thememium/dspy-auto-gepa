@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
-from .data import split_examples, to_examples
+from .data import _to_dicts, split_examples, to_examples
 from .metric_builder import generate_metric_file
 
 
@@ -59,7 +59,7 @@ class AutoGEPA:
         *,
         input_fields: list[str],
         output_fields: list[str],
-        rows: list[dict[str, Any]] | None = None,
+        rows: Any | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
         metric: Path | str | None = None,
@@ -91,12 +91,12 @@ class AutoGEPA:
 
     def _resolve_task(
         self,
-        rows: list[dict[str, Any]] | None = None,
+        rows: Any | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
         metric: Path | str | None = None,
     ) -> tuple[list[dict[str, Any]], dspy.Module, str, Path | None]:
-        resolved_rows = rows if rows is not None else self.rows
+        resolved_rows_raw = rows if rows is not None else self.rows
         resolved_module = module if module is not None else self.module
         resolved_name = name or self.name
         if resolved_module is not None:
@@ -108,7 +108,7 @@ class AutoGEPA:
         elif self.metric is not None:
             resolved_metric = self.metric
 
-        if resolved_rows is None:
+        if resolved_rows_raw is None:
             raise ValueError(
                 "rows must be provided either to the constructor or to the method"
             )
@@ -117,6 +117,7 @@ class AutoGEPA:
                 "module must be provided either to the constructor or to the method"
             )
 
+        resolved_rows = _to_dicts(resolved_rows_raw)
         return resolved_rows, resolved_module, resolved_name, resolved_metric
 
     def _run_dir(self, name: str) -> Path:
@@ -127,7 +128,7 @@ class AutoGEPA:
     def prepare(
         self,
         *,
-        rows: list[dict[str, Any]] | None = None,
+        rows: Any | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
         metric: Path | str | None = None,
@@ -251,7 +252,7 @@ class AutoGEPA:
     def run(
         self,
         *,
-        rows: list[dict[str, Any]] | None = None,
+        rows: Any | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
         metric: Path | str | None = None,

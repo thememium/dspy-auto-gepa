@@ -96,7 +96,7 @@ auto.promote(
 - `AutoGEPA(...)` — all configuration fields accepted directly in the constructor:
   - `input_fields: list[str]` — required
   - `output_fields: list[str]` — required
-  - `rows: list[dict[str, Any]] | None = None` — training data
+  - `rows: Any | None = None` — training data, accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, or any object with `.to_dicts()` or `.to_pandas()`
   - `module: dspy.Module | None = None` — the DSPy module to optimize
   - `name: str | None = None` — task name for artifact subdirectory
   - `metric: Path | str | None = None` — path to a custom metric `.py` file (skips generation)

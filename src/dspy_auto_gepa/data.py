@@ -4,6 +4,44 @@ from typing import Any
 import dspy
 
 
+def _to_dicts(obj: Any) -> list[dict[str, Any]]:
+    """Convert any dataframe-like object into a list of dicts."""
+    # Already a list of dicts
+    if isinstance(obj, list):
+        return obj
+
+    # Polars DataFrame
+    if hasattr(obj, "to_dicts"):
+        result = obj.to_dicts()
+        if isinstance(result, list):
+            return result
+
+    # Polars LazyFrame: collect then convert
+    if hasattr(obj, "collect"):
+        df = obj.collect()
+        if hasattr(df, "to_dicts"):
+            return df.to_dicts()
+
+    # Pandas DataFrame
+    if hasattr(obj, "to_dict"):
+        result = obj.to_dict(orient="records")
+        if isinstance(result, list):
+            return result
+
+    # Fallback for objects with to_pandas() (Dask, Modin, cuDF, etc.)
+    if hasattr(obj, "to_pandas"):
+        pd_df = obj.to_pandas()
+        result = pd_df.to_dict(orient="records")
+        if isinstance(result, list):
+            return result
+
+    raise TypeError(
+        f"Cannot convert {type(obj).__name__} to list of dicts. "
+        "Expected: list[dict], pandas DataFrame, polars DataFrame/LazyFrame, "
+        "or any object with .to_dicts() or .to_pandas()."
+    )
+
+
 def to_examples(
     rows: list[dict[str, Any]],
     input_fields: list[str],

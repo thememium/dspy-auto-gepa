@@ -6,7 +6,7 @@ import dspy
 import pytest
 
 from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
-from dspy_auto_gepa.data import split_examples, to_examples
+from dspy_auto_gepa.data import _to_dicts, split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
 
 
@@ -235,3 +235,23 @@ def test_prepare_uses_constructor_metric(tmp_path: Path) -> None:
 
     prepared = auto.prepare()
     assert prepared.metric_file == custom_metric
+
+
+def test_to_dicts_pandas_dataframe():
+    import pandas as pd
+
+    df = pd.DataFrame({"message": ["hello"], "label": ["greeting"]})
+    result = _to_dicts(df)
+    assert isinstance(result, list)
+    assert result == [{"message": "hello", "label": "greeting"}]
+
+
+def test_to_dicts_list_of_dicts():
+    rows = [{"message": "hello", "label": "greeting"}]
+    result = _to_dicts(rows)
+    assert result is rows
+
+
+def test_to_dicts_unsupported():
+    with pytest.raises(TypeError):
+        _to_dicts("not a dataframe")
