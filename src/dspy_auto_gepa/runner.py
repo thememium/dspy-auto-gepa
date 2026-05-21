@@ -1,12 +1,18 @@
 from pathlib import Path
-from typing import Any, Literal, Type
+from typing import Any, Literal
 
 import dspy
 from pydantic import BaseModel
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
-from .data import _to_dicts, split_examples, to_examples
+from .data import (
+    _apply_mapping,
+    _resolve_fields,
+    _to_dicts,
+    split_examples,
+    to_examples,
+)
 from .metric_builder import generate_metric_file
 
 
@@ -48,8 +54,8 @@ class AutoGEPA:
     def __init__(
         self,
         *,
-        input_fields: list[str],
-        output_fields: list[str],
+        input_fields: list[str] | dict[str, str] | None = None,
+        output_fields: list[str] | dict[str, str] | None = None,
         rows: Any | None = None,
         module: dspy.Module | None = None,
         name: str | None = None,
@@ -61,16 +67,14 @@ class AutoGEPA:
         reflection_lm: dspy.LM | None = None,
         gepa_auto: Literal["light", "medium", "heavy"] = "light",
         num_threads: int = 16,
-        metric_generator_signature: Type[dspy.Signature] | None = None,
-        metric_generator_module: Type[dspy.Module] | None = None,
+        metric_generator_signature: Any = None,
+        metric_generator_module: Any = None,
     ):
         self.rows = rows
         self.module = module
         self.name = name
         self.metric = Path(metric) if metric is not None else None
         self.config = AutoGEPAConfig(
-            input_fields=input_fields,
-            output_fields=output_fields,
             split=split,
             seed=seed,
             artifact_dir=Path(artifact_dir),
@@ -81,9 +85,17 @@ class AutoGEPA:
             metric_generator_signature=metric_generator_signature,
             metric_generator_module=metric_generator_module,
         )
+        self._raw_input_fields = input_fields
+        self._raw_output_fields = output_fields
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir: Path | None = None
         self._metric_file: Path | None = None
+
+    def _ensure_run_dir(self, name: str) -> Path:
+        run_dir = self.config.artifact_dir / name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self._run_dir = run_dir
+        return run_dir
 
     def _resolve_task(
         self,
@@ -116,11 +128,30 @@ class AutoGEPA:
         resolved_rows = _to_dicts(resolved_rows_raw)
         return resolved_rows, resolved_module, resolved_name, resolved_metric
 
-    def _ensure_run_dir(self, name: str) -> Path:
-        run_dir = self.config.artifact_dir / name
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self._run_dir = run_dir
-        return run_dir
+    def _resolve_and_prepare(
+        self,
+        rows: Any | None = None,
+        module: dspy.Module | None = None,
+        name: str | None = None,
+        metric: Path | str | None = None,
+    ) -> tuple[
+        list[dict[str, Any]], dspy.Module, str, Path | None, list[str], list[str]
+    ]:
+        task_rows, task_module, task_name, task_metric = self._resolve_task(
+            rows, module, name, metric
+        )
+
+        resolved_in, resolved_out, mapping = _resolve_fields(
+            task_module,
+            set(task_rows[0].keys()) if task_rows else set(),
+            self._raw_input_fields,
+            self._raw_output_fields,
+        )
+
+        if mapping:
+            task_rows = _apply_mapping(task_rows, mapping)
+
+        return task_rows, task_module, task_name, task_metric, resolved_in, resolved_out
 
     def load_metric(self) -> Any:
         if self._metric_file is None:
@@ -138,15 +169,15 @@ class AutoGEPA:
         metric: Path | str | None = None,
         force: bool = False,
     ) -> Datasets:
-        task_rows, task_module, task_name, task_metric = self._resolve_task(
-            rows, module, name, metric
+        task_rows, task_module, task_name, task_metric, input_fields, output_fields = (
+            self._resolve_and_prepare(rows, module, name, metric)
         )
         run_dir = self._ensure_run_dir(task_name)
 
         examples = to_examples(
             task_rows,
-            self.config.input_fields,
-            self.config.output_fields,
+            input_fields,
+            output_fields,
         )
 
         train, val, test = split_examples(
@@ -164,8 +195,8 @@ class AutoGEPA:
                 pass
             else:
                 generate_metric_file(
-                    input_fields=self.config.input_fields,
-                    output_fields=self.config.output_fields,
+                    input_fields=input_fields,
+                    output_fields=output_fields,
                     sample_rows=task_rows,
                     module=task_module,
                     out_path=metric_file,
@@ -192,8 +223,8 @@ class AutoGEPA:
         out_path: Path | str | None = None,
         force: bool = False,
     ) -> Path:
-        task_rows, task_module, task_name, task_metric = self._resolve_task(
-            rows, module, name, metric
+        task_rows, task_module, task_name, task_metric, input_fields, output_fields = (
+            self._resolve_and_prepare(rows, module, name, metric)
         )
 
         if task_metric is not None:
@@ -211,8 +242,8 @@ class AutoGEPA:
             return metric_file
 
         generate_metric_file(
-            input_fields=self.config.input_fields,
-            output_fields=self.config.output_fields,
+            input_fields=input_fields,
+            output_fields=output_fields,
             sample_rows=task_rows,
             module=task_module,
             out_path=metric_file,
@@ -305,8 +336,8 @@ class AutoGEPA:
         metric: Path | str | None = None,
         force: bool = False,
     ) -> RunResult:
-        task_rows, task_module, task_name, task_metric = self._resolve_task(
-            rows, module, name, metric
+        task_rows, task_module, task_name, task_metric, input_fields, output_fields = (
+            self._resolve_and_prepare(rows, module, name, metric)
         )
         model_path = (
             self.config.artifact_dir / task_name / f"optimized_{task_name}.json"
