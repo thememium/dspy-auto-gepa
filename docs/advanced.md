@@ -2,6 +2,8 @@
 
 For when you need to orchestrate every step yourself — custom splitting, iterative metric refinement, multiple baselines, or debugging a stubborn optimization.
 
+## With dict mapping + full manual pipeline
+
 ```python
 import dspy
 from dspy_auto_gepa import AutoGEPA
@@ -18,16 +20,17 @@ lm = dspy.LM("openrouter/openai/gpt-oss-120b")
 large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
 dspy.configure(lm=lm)
 
+# Row columns don't match signature field names
 rows = [
-    {"message": "Server room AC is out.", "urgency": "high", "sentiment": "negative"},
-    {"message": "Clean conference room B?", "urgency": "low", "sentiment": "neutral"},
+    {"msg_text": "Server room AC is out.", "urg": "high", "sent": "negative"},
+    {"msg_text": "Clean conference room B?", "urg": "low", "sent": "neutral"},
     # ... more rows
 ]
 
-# Step 1: Configure
+# Step 1: Configure with mapping
 auto = AutoGEPA(
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
+    input_fields={"msg_text": "message"},
+    output_fields={"urg": "urgency", "sent": "sentiment"},
     metric_lm=large_lm,
     reflection_lm=large_lm,
     gepa_auto="medium",  # heavier optimization
@@ -97,8 +100,8 @@ print(f"Saved to: {model_path}")
 
 ```python
 auto = AutoGEPA(
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
+    input_fields={"msg_text": "message"},
+    output_fields={"urg": "urgency", "sent": "sentiment"},
     metric_lm=large_lm,
     reflection_lm=large_lm,
 )
@@ -124,8 +127,8 @@ class MyMetricSignature(dspy.Signature):
     metric_source: str = dspy.OutputField()
 
 auto = AutoGEPA(
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
+    input_fields={"msg_text": "message"},
+    output_fields={"urg": "urgency", "sent": "sentiment"},
     metric_generator_signature=MyMetricSignature,
     metric_generator_module=dspy.ChainOfThought,
     metric_lm=large_lm,

@@ -1,6 +1,10 @@
-# Medium Usage: Generate, Review, Then Run
+# Medium Usage: Dict Mappings + Review Before Run
 
-For when you want to inspect the LLM-generated metric before paying for a full GEPA optimization run.
+For when your row columns don't match your signature fields, or you want to inspect the LLM-generated metric before paying for a full GEPA optimization run.
+
+## Dict field mapping
+
+When your database/API column names differ from your DSPy signature fields:
 
 ```python
 import dspy
@@ -18,15 +22,35 @@ lm = dspy.LM("openrouter/openai/gpt-oss-120b")
 large_lm = dspy.LM("openrouter/moonshotai/kimi-k2.5")
 dspy.configure(lm=lm)
 
+# Row columns don't match signature field names
 rows = [
-    {"message": "Server room AC is out.", "urgency": "high", "sentiment": "negative"},
-    {"message": "Clean conference room B?", "urgency": "low", "sentiment": "neutral"},
+    {"msg_text": "Server room AC is out.", "urg": "high", "sent": "negative"},
+    {"msg_text": "Clean conference room B?", "urg": "low", "sent": "neutral"},
 ]
 
-# Step 1: Set up AutoGEPA with your config
+# Map row columns to signature fields with dicts
 auto = AutoGEPA(
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
+    rows=rows,
+    module=program,
+    name="TicketSignature",
+    input_fields={"msg_text": "message"},      # row_col → sig_field
+    output_fields={"urg": "urgency", "sent": "sentiment"},
+    metric_lm=large_lm,
+    reflection_lm=large_lm,
+)
+
+results = auto.run()
+```
+
+## Generate, review, then run
+
+If you want to inspect the metric before the expensive GEPA run:
+
+```python
+# Step 1: Set up AutoGEPA with mapping
+auto = AutoGEPA(
+    input_fields={"msg_text": "message"},
+    output_fields={"urg": "urgency", "sent": "sentiment"},
     metric_lm=large_lm,
     reflection_lm=large_lm,
 )
@@ -115,10 +139,10 @@ class MyMetricSignature(dspy.Signature):
     metric_source: str = dspy.OutputField()
 
 auto = AutoGEPA(
-    input_fields=["message"],
-    output_fields=["urgency", "sentiment"],
-    metric_generator_signature=MyMetricSignature,     # custom prompt schema
-    metric_generator_module=dspy.ChainOfThought,      # different generator
+    input_fields={"msg_text": "message"},
+    output_fields={"urg": "urgency", "sent": "sentiment"},
+    metric_generator_signature=MyMetricSignature,   # custom prompt schema
+    metric_generator_module=dspy.ChainOfThought,    # different generator
     metric_lm=large_lm,
 )
 
