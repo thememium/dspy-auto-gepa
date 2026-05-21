@@ -10,10 +10,7 @@ metric_lm = dspy.LM(
     cache=False,
 )
 
-teacher_lm = dspy.LM(
-    model="openrouter/moonshotai/kimi-k2.5",
-    cache=False
-)
+teacher_lm = dspy.LM(model="openrouter/moonshotai/kimi-k2.5", cache=False)
 
 dspy.configure(lm=metric_lm)
 
@@ -55,11 +52,7 @@ def main() -> None:
         reflection_lm=teacher_lm,
     )
 
-    model_path = (
-        auto.config.artifact_dir
-        / name
-        / f"optimized_{name}.json"
-    )
+    model_path = auto.config.artifact_dir / name / f"optimized_{name}.json"
 
     force = False
     if model_path.exists():
