@@ -1,22 +1,72 @@
-# AutoGEPA
+<a name="readme-top"></a>
 
-Thin orchestration package around [DSPy](https://dspy.ai)'s `GEPA` optimizer. AutoGEPA automates the boring parts of setting up a DSPy optimization pipeline: converting raw data into `dspy.Example`s, generating a metric file with an LLM, splitting datasets, running baselines, and training with GEPA.
+<div align="center">
+  <h3 align="center">AutoGEPA</h3>
 
-## Design principle
+  <p align="center">
+    Thin orchestration package around <a href="https://dspy.ai">DSPy</a>'s <code>GEPA</code> optimizer.
+    <br />
+    <a href="#table-of-contents"><strong>Explore the Documentation »</strong></a>
+    <br />
+    <a href="https://github.com/thememium/dspy-auto-gepa/issues">Report Bug</a>
+    <a href="https://github.com/thememium/dspy-auto-gepa/issues">Request Feature</a>
+  </p>
+</div>
 
-**LLM-generated evals are drafts, not truth.** AutoGEPA generates the metric, saves it as a reproducible `.py` file, and expects you to inspect it before expensive GEPA runs.
+<!-- TABLE OF CONTENTS -->
 
-## Install
+<a name="table-of-contents"></a>
+
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about">About</a></li>
+    <li><a href="#quick-start">Quick Start</a></li>
+    <li><a href="#usage">Usage</a></li>
+    <li><a href="#api">API</a></li>
+    <li><a href="#contributing">Contributing</a></li>
+    <li><a href="#license">License</a></li>
+  </ol>
+</details>
+
+<!-- ABOUT -->
+
+<a name="about"></a>
+
+## About
+
+AutoGEPA automates the tedious parts of setting up a DSPy optimization pipeline: converting raw data into `dspy.Example`s, generating a metric file with an LLM, splitting datasets, running baselines, and training with GEPA.
+
+- **Automatic field inference** — Maps row columns to DSPy Signature fields automatically
+- **LLM-generated metrics** — Drafts evaluation metrics automatically, saving them as reproducible `.py` files for human review
+- **End-to-end pipeline** — Datasets → Baseline → GEPA optimization → Compare & promote
+- **Zero-config defaults** — Sensible defaults for all hyperparameters and LMs
+
+Requires **DSPy 3.1+**.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- QUICK START -->
+
+<a name="quick-start"></a>
+
+## Quick Start
+
+### Install
+
+Install AutoGEPA with uv (recommended):
+
+```bash
+uv add dspy-auto-gepa
+```
+
+Or with pip:
 
 ```bash
 pip install dspy-auto-gepa
 ```
 
-## Usage
-
-### Automatic field inference (recommended)
-
-When your row columns match your module's signature fields, you don't need to specify any field mappings:
+### Basic Usage
 
 ```python
 import dspy
@@ -61,6 +111,18 @@ else:
     print(f"Saved optimized program to {results.saved_to}")
 ```
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- USAGE -->
+
+<a name="usage"></a>
+
+## Usage
+
+### Automatic field inference (recommended)
+
+When your row columns match your module's signature fields, you don't need to specify any field mappings. AutoGEPA infers input and output fields directly from the `dspy.Signature` attached to your module.
+
 If your row columns don't match the module's signature fields, AutoGEPA will raise a clear error telling you which fields are missing and suggesting you use dict mappings:
 
 ```
@@ -90,8 +152,7 @@ results = auto.run()
 
 ### Advanced: step-by-step control
 
-If you prefer fine-grained control over each stage, you can call the individual
-methods that `run()` orchestrates under the hood:
+If you prefer fine-grained control over each stage, you can call the individual methods that `run()` orchestrates under the hood:
 
 ```python
 # Optional: generate the metric file first for human inspection
@@ -118,49 +179,63 @@ auto.promote(
 )
 ```
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- API -->
+
+<a name="api"></a>
+
 ## API
 
-- `AutoGEPA(...)` — all configuration fields accepted directly in the constructor:
-  - `input_fields: list[str] | dict[str, str] | None = None` — input field names (list for exact match, dict for column mapping). If not provided, inferred from module signature.
-  - `output_fields: list[str] | dict[str, str] | None = None` — output field names (list for exact match, dict for column mapping). If not provided, inferred from module signature.
-  - `rows: Any | None = None` — training data, accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, or any object with `.to_dicts()` or `.to_pandas()`
-  - `module: dspy.Module | None = None` — the DSPy module to optimize
-  - `name: str | None = None` — task name for artifact subdirectory
-  - `metric: Path | str | None = None` — path to a custom metric `.py` file (skips generation)
-  - `split: tuple[float, ...] = (0.7, 0.2, 0.1)`
-  - `seed: int = 42`
-  - `artifact_dir: Path | str = ".auto_gepa"`
-  - `metric_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/openai/gpt-oss-120b")`
-  - `reflection_lm: dspy.LM | None = None` — defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")`
-  - `gepa_auto: Literal["light", "medium", "heavy"] = "light"`
-  - `num_threads: int = 16`
-  - `metric_generator_signature: Type[dspy.Signature] | None = None` — custom signature for metric generation
-  - `metric_generator_module: Type[dspy.Module] | None = None` — custom module class for metric generation
-- `AutoGEPA.build_metric(rows=None, module=None, name=None, metric=None, out_path=None, force=False)` → `Path`
-  - Generates the metric file explicitly. Skips generation if a custom `metric` path is provided.
-  - `out_path` overrides the default save location (`.auto_gepa/<name>/metric.py`).
-  - Returns the path to the generated metric file.
-  - Use `force=True` to overwrite an existing generated metric.
-- `AutoGEPA.run(rows=None, module=None, name=None, metric=None, force=False)` → `RunResult`
-  - Orchestrates the full pipeline: datasets → baseline → train → compare → promote.
-  - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
-  - If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training.
-  - Returns a `RunResult` with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached).
-- `AutoGEPA.datasets(rows=None, module=None, name=None, metric=None, force=False)` → `Datasets`
-  - Uses `rows`, `module`, `name`, `metric` from the constructor if not overridden.
-  - `name` sets the artifact subdirectory. Defaults to `module.__class__.__name__`.
-  - `force=True` overwrites an existing metric file
-- `AutoGEPA.run_baseline(module=None, datasets)` → baseline scores
-  - Uses `module` from the constructor if not overridden.
-- `AutoGEPA.train(module=None, datasets)` → optimized module
-  - Uses `module` from the constructor if not overridden.
-- `AutoGEPA.compare(optimized_module, datasets, baseline_module=None)` → side-by-side scores
-  - Uses `module` from the constructor as `baseline_module` if not overridden.
-- `AutoGEPA.promote(optimized_module, destination)` → save optimized program
-- `AutoGEPA.load_metric()` → lazily loads the generated metric
-- `Datasets.train` / `Datasets.val` / `Datasets.test` → dataset splits
+### Constructor
 
-## Field resolution behavior
+`AutoGEPA(...)` accepts all configuration fields directly:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `rows` | `list[dict] \| DataFrame \| None` | Training data. Accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, or any object with `.to_dicts()` or `.to_pandas()` |
+| `module` | `dspy.Module \| None` | The DSPy module to optimize |
+| `name` | `str \| None` | Task name for artifact subdirectory |
+| `input_fields` | `list[str] \| dict[str, str] \| None` | Input field names. List for exact match, dict for `{row_column: signature_field}` mapping. Inferred from signature if omitted |
+| `output_fields` | `list[str] \| dict[str, str] \| None` | Output field names. Same format as `input_fields`. Inferred from signature if omitted |
+| `metric` | `Path \| str \| None` | Path to a custom metric `.py` file (skips generation) |
+| `split` | `tuple[float, ...]` | Train/val/test split ratios. Default `(0.7, 0.2, 0.1)` |
+| `seed` | `int` | Random seed for reproducibility. Default `42` |
+| `artifact_dir` | `Path \| str` | Root directory for artifacts. Default `".auto_gepa"` |
+| `metric_lm` | `dspy.LM \| None` | LM used for metric generation. Defaults to `dspy.LM("openrouter/openai/gpt-oss-120b")` |
+| `reflection_lm` | `dspy.LM \| None` | LM used for GEPA reflection. Defaults to `dspy.LM("openrouter/moonshotai/kimi-k2.5")` |
+| `gepa_auto` | `Literal["light", "medium", "heavy"]` | GEPA optimization intensity. Default `"light"` |
+| `num_threads` | `int` | Parallel threads for evaluation. Default `16` |
+| `metric_generator_signature` | `Type[dspy.Signature] \| None` | Custom signature class for metric generation |
+| `metric_generator_module` | `Type[dspy.Module] \| None` | Custom module class for metric generation |
+
+### Methods
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `build_metric` | `(rows, module, name, metric, out_path, force=False) → Path` | Generates the metric `.py` file explicitly. Skips if a custom `metric` path is provided. `out_path` overrides the default save location. Use `force=True` to overwrite an existing generated metric |
+| `run` | `(rows, module, name, metric, force=False) → RunResult` | Orchestrates the full pipeline: datasets → baseline → train → compare → promote. If `force=False` and a saved model exists at `.auto_gepa/<name>/optimized_<name>.json`, loads it and skips training. Returns a `RunResult` with `baseline`, `optimized`, `improvement`, `saved_to` (or `loaded_from` if cached) |
+| `datasets` | `(rows, module, name, metric, force=False) → Datasets` | Converts rows to `dspy.Example`s and splits into train/val/test. Uses constructor defaults if args omitted. `name` sets the artifact subdirectory. `force=True` overwrites an existing metric file |
+| `run_baseline` | `(module=None, datasets) → float` | Evaluates the unoptimized module. Uses `module` from constructor if not overridden |
+| `train` | `(module=None, datasets) → dspy.Module` | Runs GEPA optimization. Uses `module` from constructor if not overridden |
+| `compare` | `(optimized_module, datasets, baseline_module=None) → dict` | Side-by-side score comparison. Uses constructor `module` as `baseline_module` if not overridden |
+| `promote` | `(optimized_module, destination) → Path` | Saves the optimized program to the given destination |
+| `load_metric` | `() → callable` | Lazily loads the generated metric function |
+
+### Result Types
+
+- `RunResult` — returned by `run()`:
+  - `baseline: float` — score before optimization
+  - `optimized: float` — score after optimization
+  - `improvement: float` — absolute difference
+  - `saved_to: Path \| None` — where the optimized program was saved
+  - `loaded_from: Path \| None` — if a cached model was loaded instead of training
+- `Datasets` — returned by `datasets()`:
+  - `train: list[dspy.Example]`
+  - `val: list[dspy.Example]`
+  - `test: list[dspy.Example]`
+
+### Field Resolution Behaviour
 
 AutoGEPA resolves fields in this order:
 
@@ -168,6 +243,35 @@ AutoGEPA resolves fields in this order:
 2. **Neither provided** — infers both from the module's DSPy Signature. Raises a clear error if row columns don't match signature fields, listing what's missing and what's extra.
 3. **Only one provided** — if the other can be inferred from module signature or remaining row keys, great. If not, raises an error.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- CONTRIBUTING -->
+
+<a name="contributing"></a>
+
+## Contributing
+
+Quick workflow:
+
+1. Fork and branch: `git checkout -b feature/name`
+2. Make changes
+3. Commit and push
+4. Open a Pull Request
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- LICENSE -->
+
+<a name="license"></a>
+
 ## License
 
-MIT
+MIT (as declared in `pyproject.toml`).
+
+---
+
+<div align="center">
+  <p>
+    <sub>Built by <a href="https://github.com/thememium">thememium</a></sub>
+  </p>
+</div>
