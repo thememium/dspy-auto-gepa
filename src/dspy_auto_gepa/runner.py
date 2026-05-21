@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Type
 
 import dspy
 from pydantic import BaseModel
@@ -61,6 +61,8 @@ class AutoGEPA:
         reflection_lm: dspy.LM | None = None,
         gepa_auto: Literal["light", "medium", "heavy"] = "light",
         num_threads: int = 16,
+        metric_generator_signature: Type[dspy.Signature] | None = None,
+        metric_generator_module: Type[dspy.Module] | None = None,
     ):
         self.rows = rows
         self.module = module
@@ -76,6 +78,8 @@ class AutoGEPA:
             reflection_lm=reflection_lm,
             gepa_auto=gepa_auto,
             num_threads=num_threads,
+            metric_generator_signature=metric_generator_signature,
+            metric_generator_module=metric_generator_module,
         )
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir: Path | None = None
@@ -166,6 +170,8 @@ class AutoGEPA:
                     module=task_module,
                     out_path=metric_file,
                     metric_lm=self.config.metric_lm,
+                    metric_generator_signature=self.config.metric_generator_signature,
+                    metric_generator_module=self.config.metric_generator_module,
                 )
 
         self._metric_file = metric_file
@@ -183,6 +189,7 @@ class AutoGEPA:
         module: dspy.Module | None = None,
         name: str | None = None,
         metric: Path | str | None = None,
+        out_path: Path | str | None = None,
         force: bool = False,
     ) -> Path:
         task_rows, task_module, task_name, task_metric = self._resolve_task(
@@ -193,8 +200,11 @@ class AutoGEPA:
             self._metric_file = task_metric
             return task_metric
 
-        run_dir = self._ensure_run_dir(task_name)
-        metric_file = run_dir / "metric.py"
+        if out_path is not None:
+            metric_file = Path(out_path)
+        else:
+            run_dir = self._ensure_run_dir(task_name)
+            metric_file = run_dir / "metric.py"
 
         if metric_file.exists() and not force:
             self._metric_file = metric_file
@@ -207,6 +217,8 @@ class AutoGEPA:
             module=task_module,
             out_path=metric_file,
             metric_lm=self.config.metric_lm,
+            metric_generator_signature=self.config.metric_generator_signature,
+            metric_generator_module=self.config.metric_generator_module,
         )
 
         self._metric_file = metric_file

@@ -297,3 +297,60 @@ def test_build_metric_returns_custom_path(tmp_path: Path) -> None:
 
     metric_file = auto.build_metric(metric=custom_metric)
     assert metric_file == custom_metric
+
+
+def test_build_metric_with_out_path(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+    module = DummyModule()
+    custom_out = tmp_path / "my_metric.py"
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="TestBuildMetricOutPath",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+    )
+
+    with patch("dspy_auto_gepa.runner.generate_metric_file") as mock_generate:
+        metric_file = auto.build_metric(out_path=custom_out)
+
+        mock_generate.assert_called_once()
+        call_kwargs = mock_generate.call_args.kwargs
+        assert call_kwargs["out_path"] == custom_out
+    assert metric_file == custom_out
+
+
+def test_build_metric_passes_generator_config(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    rows = [{"message": "hello", "urgency": "low", "sentiment": "neutral"}]
+    module = DummyModule()
+
+    class CustomMetricSig(dspy.Signature):
+        input_keys: list[str] = dspy.InputField()
+        output_keys: list[str] = dspy.InputField()
+        sample_rows_json: str = dspy.InputField()
+        module_repr: str = dspy.InputField()
+        metric_source: str = dspy.OutputField()
+
+    auto = AutoGEPA(
+        rows=rows,
+        module=module,
+        name="TestGeneratorConfig",
+        input_fields=["message"],
+        output_fields=["urgency", "sentiment"],
+        artifact_dir=tmp_path,
+        metric_generator_signature=CustomMetricSig,
+        metric_generator_module=dspy.ChainOfThought,
+    )
+
+    with patch("dspy_auto_gepa.runner.generate_metric_file") as mock_generate:
+        auto.build_metric()
+
+        call_kwargs = mock_generate.call_args.kwargs
+        assert call_kwargs["metric_generator_signature"] == CustomMetricSig
+        assert call_kwargs["metric_generator_module"] == dspy.ChainOfThought

@@ -67,8 +67,10 @@ def generate_metric_file(
     module: dspy.Module,
     out_path: Path,
     metric_lm: dspy.LM | None = None,
+    metric_generator_signature: Any = MetricSpecGenerator,
+    metric_generator_module: Any = dspy.RLM,
 ) -> Path:
-    generator = dspy.RLM(MetricSpecGenerator)
+    generator = metric_generator_module(metric_generator_signature)
 
     if metric_lm is not None:
         generator.set_lm(metric_lm)
