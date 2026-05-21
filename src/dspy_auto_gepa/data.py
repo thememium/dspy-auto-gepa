@@ -38,6 +38,14 @@ def _to_dicts(obj: Any) -> list[dict[str, Any]]:
 
 def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
     sig = getattr(module, "signature", None)
+
+    # Fallback for wrappers like ChainOfThought that store the signature on an
+    # inner predictor rather than directly on the module.
+    if sig is None:
+        predictors = list(getattr(module, "named_predictors", lambda: [])())
+        if predictors:
+            sig = getattr(predictors[0][1], "signature", None)
+
     if sig is None:
         raise ValueError(
             "Cannot infer fields: module has no .signature attribute. "
@@ -65,6 +73,16 @@ def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]
             input_fields.append(name)
         elif is_output:
             output_fields.append(name)
+
+    # ChainOfThought prepends an auto-generated "reasoning" output field to the
+    # predictor's signature. It is never present in training rows, so strip it
+    # so that row validation and example creation work without explicit mappings.
+    if (
+        getattr(module, "signature", None) is None
+        and isinstance(module, dspy.ChainOfThought)
+        and "reasoning" in output_fields
+    ):
+        output_fields = [f for f in output_fields if f != "reasoning"]
 
     return input_fields, output_fields
 
