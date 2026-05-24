@@ -36,29 +36,12 @@ def _to_dicts(obj: Any) -> list[dict[str, Any]]:
     )
 
 
-def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
-    sig = getattr(module, "signature", None)
-
-    # Fallback for wrappers like ChainOfThought that store the signature on an
-    # inner predictor rather than directly on the module.
-    if sig is None:
-        predictors = list(getattr(module, "named_predictors", lambda: [])())
-        if predictors:
-            sig = getattr(predictors[0][1], "signature", None)
-
-    if sig is None:
-        raise ValueError(
-            "Cannot infer fields: module has no .signature attribute. "
-            "Pass input_fields and output_fields explicitly, "
-            "or provide a module with a DSPy Signature."
-        )
-
+def _extract_fields_from_signature(
+    sig: dspy.Signature,
+) -> tuple[list[str], list[str]]:
     fields = getattr(sig, "fields", None)
     if fields is None:
-        raise ValueError(
-            "Cannot infer fields: module.signature has no .fields attribute. "
-            "Pass input_fields and output_fields explicitly."
-        )
+        return [], []
 
     input_fields = []
     output_fields = []
@@ -73,6 +56,55 @@ def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]
             input_fields.append(name)
         elif is_output:
             output_fields.append(name)
+
+    return input_fields, output_fields
+
+
+def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
+    sig = getattr(module, "signature", None)
+
+    # Fallback for wrappers like ChainOfThought that store the signature on an
+    # inner predictor rather than directly on the module.
+    if sig is None:
+        predictors = list(getattr(module, "named_predictors", lambda: [])())
+
+        if len(predictors) > 1:
+            # Multi-predictor module (e.g. a custom dspy.Module subclass
+            # wrapping multiple ChainOfThought predictors). Aggregate
+            # inputs/outputs across ALL predictors so that no fields are
+            # missed, and strip the auto-generated "reasoning" field that
+            # ChainOfThought injects into each sub-predictor's signature.
+            all_inputs: set[str] = set()
+            all_outputs: set[str] = set()
+            for _, predictor in predictors:
+                pred_sig = getattr(predictor, "signature", None)
+                if pred_sig is None:
+                    continue
+                pred_in, pred_out = _extract_fields_from_signature(pred_sig)
+                if isinstance(predictor, dspy.ChainOfThought):
+                    pred_out = [f for f in pred_out if f != "reasoning"]
+                all_inputs.update(pred_in)
+                all_outputs.update(pred_out)
+            if all_inputs or all_outputs:
+                return sorted(all_inputs), sorted(all_outputs)
+
+        if predictors:
+            sig = getattr(predictors[0][1], "signature", None)
+
+    if sig is None:
+        raise ValueError(
+            "Cannot infer fields: module has no .signature attribute. "
+            "Pass input_fields and output_fields explicitly, "
+            "or provide a module with a DSPy Signature."
+        )
+
+    input_fields, output_fields = _extract_fields_from_signature(sig)
+
+    if not input_fields and not output_fields:
+        raise ValueError(
+            "Cannot infer fields: module.signature has no .fields attribute. "
+            "Pass input_fields and output_fields explicitly."
+        )
 
     # ChainOfThought prepends an auto-generated "reasoning" output field to the
     # predictor's signature. It is never present in training rows, so strip it
