@@ -20,6 +20,7 @@ class AutoGEPAConfig:
     num_threads: int = 16
     metric_generator_signature: Any = None
     metric_generator_module: Any = None
+    metric_generator_verbose: bool = True
 
     def __post_init__(self) -> None:
         if sum(self.split) > 1.0:
