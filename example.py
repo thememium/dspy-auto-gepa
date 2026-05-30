@@ -10,7 +10,7 @@ metric_lm = dspy.LM(
     cache=False,
 )
 
-teacher_lm = dspy.LM(model="openrouter/moonshotai/kimi-k2.5", cache=False)
+teacher_lm = dspy.LM(model="openrouter/xiaomi/mimo-v2.5-pro", cache=False)
 
 dspy.configure(lm=metric_lm)
 
@@ -53,11 +53,38 @@ def main() -> None:
     )
 
     model_path = auto.config.artifact_dir / name / f"optimized_{name}.json"
+    metric_path = auto.config.artifact_dir / name / "metric.py"
 
     force = False
     if model_path.exists():
         response = input(f"Model found at {model_path}. Run GEPA again? (y/N): ")
         force = response.strip().lower() == "y"
+        if not force:
+            results = auto.run(force=False)
+            print(f"Loaded existing model from {results.loaded_from}")
+            return
+
+    if not metric_path.exists() or force:
+        metric_path = auto.build_metric(
+            name=name,
+            rows=rows,
+            module=program,
+            force=force,
+        )
+        print(f"Metric generated: {metric_path}")
+    else:
+        print(f"Metric already exists at {metric_path}")
+
+    review = input(f"Review the generated metric at {metric_path}? (y/N): ")
+    if review.strip().lower() == "y":
+        print(f"\n--- {metric_path} ---")
+        print(metric_path.read_text())
+        print("--- End of metric ---\n")
+
+    proceed = input("Continue with GEPA training? (Y/n): ")
+    if proceed.strip().lower() == "n":
+        print("Aborted.")
+        return
 
     results = auto.run(force=force)
 
