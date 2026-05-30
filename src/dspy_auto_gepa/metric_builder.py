@@ -281,8 +281,14 @@ def generate_metric_file(
     metric_lm: dspy.LM | None = None,
     metric_generator_signature: Any = MetricSpecGenerator,
     metric_generator_module: Any = dspy.RLM,
+    metric_generator_verbose: bool = True,
 ) -> Path:
-    generator = metric_generator_module(metric_generator_signature)
+    if metric_generator_module is dspy.RLM:
+        generator = metric_generator_module(
+            metric_generator_signature, verbose=metric_generator_verbose
+        )
+    else:
+        generator = metric_generator_module(metric_generator_signature)
 
     if metric_lm is not None:
         generator.set_lm(metric_lm)
