@@ -69,6 +69,7 @@ class AutoGEPA:
         num_threads: int = 16,
         metric_generator_signature: Any = None,
         metric_generator_module: Any = None,
+        metric_generator_verbose: bool = True,
     ):
         self.rows = rows
         self.module = module
@@ -84,6 +85,7 @@ class AutoGEPA:
             num_threads=num_threads,
             metric_generator_signature=metric_generator_signature,
             metric_generator_module=metric_generator_module,
+            metric_generator_verbose=metric_generator_verbose,
         )
         self._raw_input_fields = input_fields
         self._raw_output_fields = output_fields
@@ -203,6 +205,7 @@ class AutoGEPA:
                     metric_lm=self.config.metric_lm,
                     metric_generator_signature=self.config.metric_generator_signature,
                     metric_generator_module=self.config.metric_generator_module,
+                    metric_generator_verbose=self.config.metric_generator_verbose,
                 )
 
         self._metric_file = metric_file
@@ -250,6 +253,7 @@ class AutoGEPA:
             metric_lm=self.config.metric_lm,
             metric_generator_signature=self.config.metric_generator_signature,
             metric_generator_module=self.config.metric_generator_module,
+            metric_generator_verbose=self.config.metric_generator_verbose,
         )
 
         self._metric_file = metric_file
