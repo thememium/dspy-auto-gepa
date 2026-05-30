@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.8 (2026-05-30)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.7...v0.1.8)
+
+### 💅 Refactors
+
+- **data.py**: extract and aggregate signature fields for multi‑predictor modules (#3) (#3) ([58c9ee2](https://github.com/thememium/dspy-auto-gepa/commit/58c9ee28b590a257e5f9fdef1bc8f6240b4ca4ce))
+
+### 📖 Documentation
+
+- **readme**: include version in example name ([c02d9bf](https://github.com/thememium/dspy-auto-gepa/commit/c02d9bfebc402273e55edb8f11e17d9e8014a0af))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.7 (2026-05-21)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.6...v0.1.7)
