@@ -5,14 +5,7 @@ description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
-keywords = [
-  "dspy",
-  "ai",
-  "gepa",
-  "optimizer",
-  "orchestration",
-  "optimization",
-]
+keywords = ["dspy", "ai", "gepa", "optimizer", "orchestration", "optimization"]
 classifiers = [
   "Operating System :: OS Independent",
   "Development Status :: 3 - Alpha",
@@ -21,11 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = [
-    "dspy>=3.2.1",
-    "pandas>=3.0.3",
-    "pydantic>=2.13.4",
-]
+dependencies = ["dspy>=3.2.1", "pandas>=3.0.3", "pydantic>=2.13.4"]
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
@@ -56,9 +45,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:.*prefix.*:DeprecationWarning:dspy.*",
-]
+filterwarnings = ["ignore:.*prefix.*:DeprecationWarning:dspy.*"]
 
 [tool.deptry]
 known_first_party = ["dspy_auto_gepa"]
@@ -72,6 +59,6 @@ test = "uv run pytest tests/ -v"
 sort = "uv run isort ."
 lint = "uv run ruff check ."
 format = "uv run ruff format ."
-deptry = "uv deptry ."
+deptry = "uv run deptry ."
 typecheck = "uv run ty check"
 release = "uv run usechange release"
