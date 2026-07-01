@@ -4,10 +4,10 @@ from typing import Any, Callable
 
 import dspy
 
-
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class JudgeResult:
@@ -39,6 +39,7 @@ class QualityResult:
 # ---------------------------------------------------------------------------
 # LLMJudge
 # ---------------------------------------------------------------------------
+
 
 class _JudgeSignature(dspy.Signature):
     """Score a data row on multiple quality dimensions.
@@ -117,6 +118,7 @@ class LLMJudge:
 # Validator
 # ---------------------------------------------------------------------------
 
+
 class Validator:
     """Chains a list of callable validators over row dicts.
 
@@ -142,6 +144,7 @@ class Validator:
 # ---------------------------------------------------------------------------
 # DiversityChecker
 # ---------------------------------------------------------------------------
+
 
 def _ngrams(text: str, n: int) -> set[str]:
     """Extract character-level n-grams from *text*."""
@@ -205,6 +208,7 @@ class DiversityChecker:
 # ---------------------------------------------------------------------------
 # RejectionSampler
 # ---------------------------------------------------------------------------
+
 
 class RejectionSampler:
     """Orchestrates LLMJudge, Validator, and DiversityChecker.
