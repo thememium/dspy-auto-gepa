@@ -5,6 +5,7 @@ All LLM calls are mocked — no real API traffic.
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import dspy
@@ -14,7 +15,6 @@ import pytest
 from dspy_auto_gepa.config import AutoDataConfig
 from dspy_auto_gepa.generator import AutoData, StreamingDatasetWriter
 from dspy_auto_gepa.runner import GenerationResult
-
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -38,9 +38,9 @@ class DummyModule(dspy.Module):
         return dspy.Prediction(urgency="low", sentiment="neutral")
 
 
-def _make_autodata_config(**overrides) -> AutoDataConfig:
+def _make_autodata_config(**overrides: Any) -> AutoDataConfig:
     """Return an AutoDataConfig with judge/diversity disabled for simpler tests."""
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         n=5,
         seed=42,
         max_retries=3,
@@ -106,7 +106,9 @@ class TestStreamingDatasetWriter:
         assert StreamingDatasetWriter._detect_format(tmp_path / "a.jsonl") == "jsonl"
         assert StreamingDatasetWriter._detect_format(tmp_path / "a.json") == "jsonl"
         assert StreamingDatasetWriter._detect_format(tmp_path / "a.csv") == "csv"
-        assert StreamingDatasetWriter._detect_format(tmp_path / "a.parquet") == "parquet"
+        assert (
+            StreamingDatasetWriter._detect_format(tmp_path / "a.parquet") == "parquet"
+        )
         assert StreamingDatasetWriter._detect_format(tmp_path / "a.pq") == "parquet"
 
         with pytest.raises(ValueError, match="Unsupported file extension"):
@@ -221,10 +223,14 @@ class TestAutoDataConstructor:
     def test_from_csv(self, tmp_path: Path) -> None:
         """from_csv loads seed_examples from a CSV file."""
         csv_path = tmp_path / "seeds.csv"
-        csv_path.write_text("message,urgency,sentiment\nhello,low,neutral\nworld,high,negative\n")
+        csv_path.write_text(
+            "message,urgency,sentiment\nhello,low,neutral\nworld,high,negative\n"
+        )
 
         module = DummyModule()
-        gen = AutoData.from_csv(csv_path, module=module, data_lm=MagicMock(), description="test")
+        gen = AutoData.from_csv(
+            csv_path, module=module, data_lm=MagicMock(), description="test"
+        )
 
         assert gen.seed_examples is not None
         assert len(gen.seed_examples) == 2
@@ -234,9 +240,13 @@ class TestAutoDataConstructor:
     def test_from_json(self, tmp_path: Path) -> None:
         """from_json loads seed_examples from a JSON file."""
         json_path = tmp_path / "seeds.json"
-        json_path.write_text(json.dumps([
-            {"message": "hi", "urgency": "low", "sentiment": "positive"},
-        ]))
+        json_path.write_text(
+            json.dumps(
+                [
+                    {"message": "hi", "urgency": "low", "sentiment": "positive"},
+                ]
+            )
+        )
 
         module = DummyModule()
         gen = AutoData.from_json(
@@ -356,7 +366,9 @@ class TestAutoDataGeneration:
         assert mock_predictor.call_count == 2
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_full_flow(self, mock_predict_cls: MagicMock, tmp_path: Path) -> None:
+    def test_generate_full_flow(
+        self, mock_predict_cls: MagicMock, tmp_path: Path
+    ) -> None:
         """Mocked full generate() → returns GenerationResult with correct row count."""
         call_count = 0
 
@@ -406,9 +418,15 @@ class TestAutoDataGeneration:
 
         # Pre-write rows to the file
         writer = StreamingDatasetWriter(output_path)
-        writer.write_row({"message": "existing1", "urgency": "low", "sentiment": "neutral"})
-        writer.write_row({"message": "existing2", "urgency": "high", "sentiment": "negative"})
-        writer.write_row({"message": "existing3", "urgency": "medium", "sentiment": "neutral"})
+        writer.write_row(
+            {"message": "existing1", "urgency": "low", "sentiment": "neutral"}
+        )
+        writer.write_row(
+            {"message": "existing2", "urgency": "high", "sentiment": "negative"}
+        )
+        writer.write_row(
+            {"message": "existing3", "urgency": "medium", "sentiment": "neutral"}
+        )
 
         gen = AutoData(
             module=DummyModule(),
@@ -427,7 +445,9 @@ class TestAutoDataGeneration:
         mock_predict_cls.assert_not_called()
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_force_overwrites(self, mock_predict_cls: MagicMock, tmp_path: Path) -> None:
+    def test_generate_force_overwrites(
+        self, mock_predict_cls: MagicMock, tmp_path: Path
+    ) -> None:
         """force=True ignores existing rows and generates fresh data."""
         output_path = tmp_path / "output.jsonl"
 
@@ -443,7 +463,9 @@ class TestAutoDataGeneration:
             if call_count == 1:
                 return MagicMock(generated_inputs='[{"message": "new1"}]')
             else:
-                return MagicMock(generated_output='{"urgency": "high", "sentiment": "positive"}')
+                return MagicMock(
+                    generated_output='{"urgency": "high", "sentiment": "positive"}'
+                )
 
         mock_predictor = MagicMock()
         mock_predictor.side_effect = predict_side_effect
@@ -463,10 +485,14 @@ class TestAutoDataGeneration:
         mock_predictor.assert_called()
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_outputs_all_retries_fail(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_outputs_all_retries_fail(
+        self, mock_predict_cls: MagicMock
+    ) -> None:
         """When all retries fail for output, empty values are used."""
         mock_predictor = MagicMock()
-        mock_predictor.return_value = MagicMock(generated_output="not valid json at all")
+        mock_predictor.return_value = MagicMock(
+            generated_output="not valid json at all"
+        )
         mock_predict_cls.return_value = mock_predictor
 
         gen = AutoData(
@@ -507,7 +533,9 @@ class TestAutoDataGeneration:
         assert len(inputs) == 3
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_inputs_with_seed_examples(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_inputs_with_seed_examples(
+        self, mock_predict_cls: MagicMock
+    ) -> None:
         """Seed examples are passed through for diversity reference."""
         mock_predictor = MagicMock()
         mock_predictor.return_value = MagicMock(
