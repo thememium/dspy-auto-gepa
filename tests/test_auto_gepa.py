@@ -6,7 +6,7 @@ import dspy
 import pytest
 
 from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
-from dspy_auto_gepa.data import apply_mapping, _to_dicts, split_examples, to_examples
+from dspy_auto_gepa.data import _to_dicts, apply_mapping, split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
 from dspy_auto_gepa.runner import RunResult
 
