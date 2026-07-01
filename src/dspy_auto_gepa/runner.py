@@ -101,6 +101,8 @@ class AutoGEPA:
         metric_generator_signature: Any = None,
         metric_generator_module: Any = None,
         metric_generator_verbose: bool = True,
+        data_lm: dspy.LM | None = None,
+        judge_lm: dspy.LM | None = None,
     ):
         self.rows = rows
         self.module = module
@@ -120,6 +122,8 @@ class AutoGEPA:
         )
         self._raw_input_fields = input_fields
         self._raw_output_fields = output_fields
+        self._data_lm = data_lm
+        self._judge_lm = judge_lm
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir: Path | None = None
         self._metric_file: Path | None = None
@@ -424,3 +428,43 @@ class AutoGEPA:
         dest.parent.mkdir(parents=True, exist_ok=True)
         optimized_module.save(str(dest))
         return dest
+
+    def generate(
+        self,
+        n: int = 100,
+        data_lm: dspy.LM | None = None,
+        seed_examples: list[dict] | str | None = None,
+        schema: Any | None = None,
+        force: bool = False,
+        output_path: str | Path | None = None,
+    ) -> list[dict]:
+        """Generate synthetic training data using AutoData.
+
+        Args:
+            n: Number of rows to generate.
+            data_lm: LM for data generation. Defaults to constructor's
+                data_lm or metric_lm.
+            seed_examples: Seed data (list of dicts or file path).
+            schema: Optional Pydantic model for output schema override.
+            force: If True, regenerate even if output exists.
+            output_path: Output file path. Format auto-detected from extension.
+
+        Returns:
+            List of generated row dicts.
+        """
+        from .generator import AutoData
+
+        resolved_lm = data_lm or self._data_lm or self.config.metric_lm
+
+        gen = AutoData(
+            module=self.module,
+            data_lm=resolved_lm,
+            schema=schema,
+        )
+        result = gen.generate(
+            n=n,
+            seed_examples=seed_examples,
+            force=force,
+            output_path=output_path,
+        )
+        return result.rows

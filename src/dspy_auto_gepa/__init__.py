@@ -1,7 +1,8 @@
 from .artifacts import load_metric, save_results
-from .config import AutoGEPAConfig
+from .config import AutoDataConfig, AutoGEPAConfig
 from .data import apply_mapping, infer_fields_from_module, resolve_fields
-from .runner import AutoGEPA, Datasets
+from .generator import AutoData
+from .runner import AutoGEPA, Datasets, GenerationFailed, GenerationResult
 
 try:
     from importlib.metadata import version
@@ -11,9 +12,13 @@ except ImportError:
     __version__ = "unknown"
 
 __all__ = [
+    "AutoData",
+    "AutoDataConfig",
     "AutoGEPA",
     "AutoGEPAConfig",
     "Datasets",
+    "GenerationFailed",
+    "GenerationResult",
     "apply_mapping",
     "infer_fields_from_module",
     "load_metric",

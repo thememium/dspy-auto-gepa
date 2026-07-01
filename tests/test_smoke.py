@@ -62,10 +62,17 @@ def assert_public_api() -> None:
     import dspy_auto_gepa
 
     for name in [
+        "AutoData",
+        "AutoDataConfig",
         "AutoGEPA",
         "AutoGEPAConfig",
         "Datasets",
+        "GenerationFailed",
+        "GenerationResult",
+        "apply_mapping",
+        "infer_fields_from_module",
         "load_metric",
+        "resolve_fields",
         "save_results",
     ]:
         if not hasattr(dspy_auto_gepa, name):

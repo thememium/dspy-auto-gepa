@@ -126,7 +126,7 @@ class _InputGenerationSignature(dspy.Signature):
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
-    input_fields: str = dspy.InputField(desc="Comma-separated list of input field names")
+    input_field_names: str = dspy.InputField(desc="Comma-separated list of input field names")
     existing_inputs_json: str = dspy.InputField(
         desc="JSON array of already-generated inputs for diversity reference",
         default="[]",
@@ -135,6 +135,19 @@ class _InputGenerationSignature(dspy.Signature):
     generated_inputs: str = dspy.OutputField(
         desc="JSON array of input objects, each with exactly the specified field names"
     )
+
+
+class _OutputGenerationSignature(dspy.Signature):
+    """Generate correct output values for a given input.
+
+    Return a JSON object with exactly the specified output field names as keys.
+    Values should be realistic and correct for the given task.
+    """
+
+    task_description: str = dspy.InputField(desc="Description of the task")
+    input_data: str = dspy.InputField(desc="JSON object of the input row")
+    output_field_names: str = dspy.InputField(desc="Comma-separated list of output field names")
+    generated_output: str = dspy.OutputField(desc="JSON object with exactly the specified output field names")
 
 
 class AutoData:
@@ -209,7 +222,7 @@ class AutoData:
                     with dspy.settings.context(lm=self.data_lm):
                         result = predictor(
                             task_description=description,
-                            input_fields=", ".join(self.input_fields),
+                            input_field_names=", ".join(self.input_fields),
                             existing_inputs_json=existing_json,
                             n_to_generate=current_batch,
                         )
@@ -245,6 +258,61 @@ class AutoData:
                     continue
 
         return all_inputs[:n]
+
+    def _generate_outputs(
+        self,
+        inputs: list[dict[str, Any]],
+        description: str,
+    ) -> list[dict[str, Any]]:
+        """Pass 2: Generate output values for each input row using the LLM."""
+        predictor = dspy.Predict(_OutputGenerationSignature)
+        all_outputs: list[dict[str, Any]] = []
+        max_retries = self.config.max_retries
+
+        # Setup quality pipeline components
+        judge = None
+        if self.config.judge_enabled:
+            judge_lm = self.config.judge_lm or self.data_lm
+            judge = LLMJudge(lm=judge_lm)
+
+        for inp in inputs:
+            for attempt in range(max_retries):
+                try:
+                    with dspy.settings.context(lm=self.data_lm):
+                        result = predictor(
+                            task_description=description,
+                            input_data=json.dumps(inp, default=str),
+                            output_field_names=", ".join(self.output_fields),
+                        )
+
+                    parsed = json.loads(result.generated_output)
+                    if not isinstance(parsed, dict):
+                        continue
+
+                    # Keep only output fields, strip reasoning
+                    clean_output = {}
+                    for k in self.output_fields:
+                        if k == "reasoning":
+                            continue
+                        clean_output[k] = parsed.get(k, "")
+
+                    # Quality check via judge
+                    if judge is not None:
+                        full_row = {**inp, **clean_output}
+                        judge_result = judge.score(full_row, task_description=description)
+                        if judge_result.score < 0.5 and attempt < max_retries - 1:
+                            continue  # Retry with better output
+
+                    all_outputs.append(clean_output)
+                    break
+
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    if attempt == max_retries - 1:
+                        # Last attempt failed — use empty output
+                        all_outputs.append({k: "" for k in self.output_fields if k != "reasoning"})
+                    continue
+
+        return all_outputs
 
     @classmethod
     def from_csv(
@@ -328,17 +396,33 @@ class AutoData:
         ) or ""
         inputs = self._generate_inputs(n, resolved_seeds, description)
 
-        for inp in inputs:
-            writer.write_row(inp)
+        outputs = self._generate_outputs(inputs, description)
+
+        complete_rows = []
+        for inp, out in zip(inputs, outputs):
+            complete_rows.append({**inp, **out})
+
+        writer = StreamingDatasetWriter(output_path)
+        for row in complete_rows:
+            writer.write_row(row)
+
+        quality_scores = None
+        if self.config.judge_enabled:
+            judge = LLMJudge(lm=self.config.judge_lm or self.data_lm)
+            quality_scores = []
+            for row in complete_rows:
+                qr = judge.score(row, task_description=description)
+                quality_scores.append(qr.score)
 
         elapsed = time.time() - start_time
         return GenerationResult(
-            rows=inputs,
+            rows=complete_rows,
             n_requested=n,
-            n_produced=len(inputs),
-            n_failed=n - len(inputs),
+            n_produced=len(complete_rows),
+            n_failed=n - len(complete_rows),
             seed_used=self.config.seed,
             generation_time_seconds=elapsed,
+            quality_scores=quality_scores,
         )
 
     def _resolve_seeds(
