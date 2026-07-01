@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
 from .data import (
-    _apply_mapping,
-    _resolve_fields,
+    apply_mapping,
+    resolve_fields,
     _to_dicts,
     split_examples,
     to_examples,
@@ -47,6 +47,37 @@ class RunResult(BaseModel):
         return (
             f"RunResult(baseline={self.baseline}, optimized={self.optimized}, "
             f"improvement={self.improvement}, saved_to={self.saved_to!r})"
+        )
+
+
+class GenerationResult(BaseModel):
+    rows: list[dict]
+    n_requested: int
+    n_produced: int
+    n_failed: int
+    seed_used: int
+    schema_hash: str | None = None
+    generation_time_seconds: float
+    quality_scores: list[float] | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"GenerationResult(n_produced={self.n_produced}, "
+            f"n_failed={self.n_failed}, "
+            f"generation_time_seconds={self.generation_time_seconds:.2f})"
+        )
+
+
+class GenerationFailed(Exception):
+    def __init__(self, n_requested: int, n_produced: int):
+        self.n_requested = n_requested
+        self.n_produced = n_produced
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return (
+            f"Generation failed: produced {self.n_produced} of "
+            f"{self.n_requested} requested rows"
         )
 
 
@@ -143,7 +174,7 @@ class AutoGEPA:
             rows, module, name, metric
         )
 
-        resolved_in, resolved_out, mapping = _resolve_fields(
+        resolved_in, resolved_out, mapping = resolve_fields(
             task_module,
             set(task_rows[0].keys()) if task_rows else set(),
             self._raw_input_fields,
@@ -151,7 +182,7 @@ class AutoGEPA:
         )
 
         if mapping:
-            task_rows = _apply_mapping(task_rows, mapping)
+            task_rows = apply_mapping(task_rows, mapping)
 
         return task_rows, task_module, task_name, task_metric, resolved_in, resolved_out
 

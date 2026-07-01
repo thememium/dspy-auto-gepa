@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -35,3 +37,28 @@ class AutoGEPAConfig:
             self.metric_generator_signature = MetricSpecGenerator
         if self.metric_generator_module is None:
             self.metric_generator_module = dspy.RLM
+
+
+@dataclass
+class AutoDataConfig:
+    """Configuration for the automatic data generation pipeline."""
+
+    n: int = 100
+    seed: int = 42
+    max_retries: int = 3
+    num_threads: int = 16
+    diversity_threshold: float = 0.3
+    judge_enabled: bool = True
+    validators_enabled: bool = True
+    diversity_enabled: bool = True
+    rejection_sampling_enabled: bool = True
+    data_lm: dspy.LM | None = None
+    judge_lm: dspy.LM | None = None
+
+    def __post_init__(self) -> None:
+        if self.n <= 0:
+            raise ValueError("n must be positive")
+        if self.max_retries <= 0:
+            raise ValueError("max_retries must be positive")
+        if not (0.0 <= self.diversity_threshold <= 1.0):
+            raise ValueError("diversity_threshold must be between 0.0 and 1.0")

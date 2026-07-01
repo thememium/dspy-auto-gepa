@@ -60,7 +60,7 @@ def _extract_fields_from_signature(
     return input_fields, output_fields
 
 
-def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
+def infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
     sig = getattr(module, "signature", None)
 
     # Fallback for wrappers like ChainOfThought that store the signature on an
@@ -119,13 +119,13 @@ def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]
     return input_fields, output_fields
 
 
-def _resolve_fields(
+def resolve_fields(
     module: dspy.Module,
     row_keys: set[str],
     input_fields: list[str] | dict[str, str] | None,
     output_fields: list[str] | dict[str, str] | None,
 ) -> tuple[list[str], list[str], dict[str, str]]:
-    sig_in, sig_out = _infer_fields_from_module(module)
+    sig_in, sig_out = infer_fields_from_module(module)
     all_sig = set(sig_in + sig_out)
 
     mapping: dict[str, str] = {}
@@ -172,7 +172,7 @@ def _resolve_fields(
     return resolved_input, resolved_output, mapping
 
 
-def _apply_mapping(
+def apply_mapping(
     rows: list[dict[str, Any]], mapping: dict[str, str]
 ) -> list[dict[str, Any]]:
     if not mapping:
