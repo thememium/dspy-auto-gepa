@@ -6,13 +6,7 @@ from pydantic import BaseModel
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
-from .data import (
-    apply_mapping,
-    resolve_fields,
-    _to_dicts,
-    split_examples,
-    to_examples,
-)
+from .data import _to_dicts, apply_mapping, resolve_fields, split_examples, to_examples
 from .metric_builder import generate_metric_file
 
 
@@ -462,6 +456,7 @@ class AutoGEPA:
             module=self.module,
             data_lm=resolved_lm,
             schema=schema,
+            name=self.name,
         )
         result = gen.generate(
             n=n,
