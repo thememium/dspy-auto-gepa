@@ -8,7 +8,7 @@ import pytest
 from dspy_auto_gepa import AutoGEPA, AutoGEPAConfig
 from dspy_auto_gepa.data import _to_dicts, apply_mapping, split_examples, to_examples
 from dspy_auto_gepa.metric_builder import _strip_markdown_fences
-from dspy_auto_gepa.runner import RunResult
+from dspy_auto_gepa.runner import Datasets, RunResult
 
 
 class TicketSignature(dspy.Signature):
@@ -147,20 +147,23 @@ def test_run_force_retrains(tmp_path: Path) -> None:
     )
 
     with patch.object(module, "load") as mock_load:
-        with patch.object(auto, "train") as mock_train:
-            with patch.object(auto, "compare") as mock_compare:
-                with patch.object(auto, "promote") as mock_promote:
-                    mock_train.return_value = module
-                    mock_compare.return_value = RunResult(
-                        baseline=0.5, optimized=0.8, improvement=0.3
-                    )
+        with patch.object(auto, "datasets") as mock_datasets:
+            with patch.object(auto, "train") as mock_train:
+                with patch.object(auto, "compare") as mock_compare:
+                    with patch.object(auto, "promote") as mock_promote:
+                        mock_datasets.return_value = Datasets(train=[], val=[], test=[])
+                        mock_train.return_value = module
+                        mock_compare.return_value = RunResult(
+                            baseline=0.5, optimized=0.8, improvement=0.3
+                        )
 
-                    result = auto.run(force=True)
+                        result = auto.run(force=True)
 
-                    mock_load.assert_not_called()
-                    mock_train.assert_called_once()
-                    mock_compare.assert_called_once()
-                    mock_promote.assert_called_once()
+                        mock_load.assert_not_called()
+                        mock_datasets.assert_called_once()
+                        mock_train.assert_called_once()
+                        mock_compare.assert_called_once()
+                        mock_promote.assert_called_once()
 
     assert result.loaded_from is None
     assert result.baseline == 0.5
