@@ -456,6 +456,8 @@ class AutoGEPA:
 
         resolved_lm = data_lm or self._data_lm or self.config.metric_lm
 
+        if self.module is None:
+            raise ValueError("module must be provided to generate data")
         gen = AutoData(
             module=self.module,
             data_lm=resolved_lm,

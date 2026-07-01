@@ -1,16 +1,12 @@
 from unittest.mock import MagicMock, patch
 
-import dspy
 import pytest
 
 from dspy_auto_gepa.quality import (
     DiversityChecker,
-    DiversityResult,
     JudgeResult,
     LLMJudge,
-    QualityResult,
     RejectionSampler,
-    ValidationResult,
     Validator,
 )
 

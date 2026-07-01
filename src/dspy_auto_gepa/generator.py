@@ -1,8 +1,7 @@
 import json
 import os
+import random
 import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +13,8 @@ from .data import infer_fields_from_module, _to_dicts
 from .quality import (
     DiversityChecker,
     LLMJudge,
-    RejectionSampler,
-    Validator,
 )
-from .runner import GenerationFailed, GenerationResult
+from .runner import GenerationResult
 
 
 class StreamingDatasetWriter:
@@ -158,11 +155,13 @@ class AutoData:
         config: AutoDataConfig | None = None,
         schema: type[Any] | None = None,
         description: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.module = module
         self.config = config or AutoDataConfig()
         self.description = description
         self.schema = schema
+        self._name = name
 
         # data_lm: first-class param, falls back to dspy.settings.lm
         self.data_lm = data_lm or self.config.data_lm or dspy.settings.lm
@@ -175,6 +174,12 @@ class AutoData:
 
         # Validate description
         sig = getattr(module, "signature", None)
+        if sig is None:
+            # Fallback for wrappers like ChainOfThought
+            predictors = list(getattr(module, "named_predictors", lambda: [])())
+            if predictors:
+                sig = getattr(predictors[0][1], "signature", None)
+
         sig_docstring = getattr(sig, "__doc__", "") or ""
         if not sig_docstring.strip() and not self.description:
             raise ValueError(
@@ -366,13 +371,15 @@ class AutoData:
         """
         n = n or self.config.n
         start_time = time.time()
+        random.seed(self.config.seed)
 
         # Resolve seed examples
         resolved_seeds = self._resolve_seeds(seed_examples)
 
         # Determine output path
         if output_path is None:
-            output_path = Path(".auto_gepa") / "generated" / "rows.jsonl"
+            name = self._name or "unnamed"
+            output_path = Path(".auto_gepa") / name / "generated" / "rows.jsonl"
         output_path = Path(output_path)
 
         # Setup streaming writer
