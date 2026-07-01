@@ -9,11 +9,8 @@ import dspy
 import pandas as pd
 
 from .config import AutoDataConfig
-from .data import infer_fields_from_module, _to_dicts
-from .quality import (
-    DiversityChecker,
-    LLMJudge,
-)
+from .data import _to_dicts, infer_fields_from_module
+from .quality import DiversityChecker, LLMJudge
 from .runner import GenerationResult
 
 
@@ -123,7 +120,9 @@ class _InputGenerationSignature(dspy.Signature):
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
-    input_field_names: str = dspy.InputField(desc="Comma-separated list of input field names")
+    input_field_names: str = dspy.InputField(
+        desc="Comma-separated list of input field names"
+    )
     existing_inputs_json: str = dspy.InputField(
         desc="JSON array of already-generated inputs for diversity reference",
         default="[]",
@@ -143,8 +142,12 @@ class _OutputGenerationSignature(dspy.Signature):
 
     task_description: str = dspy.InputField(desc="Description of the task")
     input_data: str = dspy.InputField(desc="JSON object of the input row")
-    output_field_names: str = dspy.InputField(desc="Comma-separated list of output field names")
-    generated_output: str = dspy.OutputField(desc="JSON object with exactly the specified output field names")
+    output_field_names: str = dspy.InputField(
+        desc="Comma-separated list of output field names"
+    )
+    generated_output: str = dspy.OutputField(
+        desc="JSON object with exactly the specified output field names"
+    )
 
 
 class AutoData:
@@ -304,7 +307,9 @@ class AutoData:
                     # Quality check via judge
                     if judge is not None:
                         full_row = {**inp, **clean_output}
-                        judge_result = judge.score(full_row, task_description=description)
+                        judge_result = judge.score(
+                            full_row, task_description=description
+                        )
                         if judge_result.score < 0.5 and attempt < max_retries - 1:
                             continue  # Retry with better output
 
@@ -314,7 +319,9 @@ class AutoData:
                 except (json.JSONDecodeError, ValueError, TypeError):
                     if attempt == max_retries - 1:
                         # Last attempt failed — use empty output
-                        all_outputs.append({k: "" for k in self.output_fields if k != "reasoning"})
+                        all_outputs.append(
+                            {k: "" for k in self.output_fields if k != "reasoning"}
+                        )
                     continue
 
         return all_outputs
@@ -398,9 +405,11 @@ class AutoData:
                 generation_time_seconds=elapsed,
             )
 
-        description = self.description or getattr(
-            getattr(self.module, "signature", None), "__doc__", ""
-        ) or ""
+        description = (
+            self.description
+            or getattr(getattr(self.module, "signature", None), "__doc__", "")
+            or ""
+        )
         inputs = self._generate_inputs(n, resolved_seeds, description)
 
         outputs = self._generate_outputs(inputs, description)
