@@ -360,7 +360,7 @@ class AutoData:
     def generate(
         self,
         n: int | None = None,
-        seed_examples: list[dict] | str | None = None,
+        seed_examples: Any | None = None,
         force: bool = False,
         output_path: str | Path | None = None,
     ) -> GenerationResult:
@@ -368,7 +368,8 @@ class AutoData:
 
         Args:
             n: Number of rows to generate. Defaults to config.n.
-            seed_examples: Seed data — list of dicts, or file path string.
+            seed_examples: Seed data — list[dict], DataFrame, file path
+                (.jsonl, .json, .csv, .parquet), or any object _to_dicts supports.
             force: If False, resume from partial save. If True, regenerate.
             output_path: Output file path. Format auto-detected from extension.
                 Defaults to .auto_gepa/generated/rows.jsonl.
@@ -441,22 +442,7 @@ class AutoData:
             quality_scores=quality_scores,
         )
 
-    def _resolve_seeds(
-        self, seed_examples: list[dict] | str | None
-    ) -> list[dict[str, Any]] | None:
-        """Resolve seed examples from various input formats."""
+    def _resolve_seeds(self, seed_examples: Any | None) -> list[dict[str, Any]] | None:
         if seed_examples is None:
             return self.seed_examples
-        if isinstance(seed_examples, str):
-            path = Path(seed_examples)
-            if path.suffix == ".csv":
-                return pd.read_csv(path).to_dict(orient="records")
-            elif path.suffix == ".json":
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and "rows" in data:
-                    data = data["rows"]
-                return _to_dicts(data)
-            else:
-                raise ValueError(f"Unsupported seed file format: {path.suffix}")
-        return seed_examples
+        return _to_dicts(seed_examples)
