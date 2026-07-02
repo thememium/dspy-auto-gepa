@@ -9,8 +9,7 @@ from dspy_auto_gepa import AutoData, AutoDataConfig
 # ---------------------------------------------------------------------------
 
 data_lm = dspy.LM(
-    "openrouter/openai/gpt-oss-20b:nitro",
-    # extra_body={"provider": {"order": ["groq"], "allow_fallbacks": False}},
+    model="openrouter/openai/gpt-oss-120b:nitro",
     cache=False,
 )
 
@@ -41,7 +40,7 @@ program = dspy.ChainOfThought(TicketSignature)
 seed_rows = [
     {"message": "The server room AC is out and equipment is overheating.", "urgency": "high", "sentiment": "negative"},
     {"message": "Can someone clean conference room B next week?", "urgency": "low", "sentiment": "neutral"},
-    {"message": "Thanks for fixing the VPN, works perfectly now!", "urgency": "low", "sentiment": "positive"},
+    {"message": "Thanks for fixing the VPN, works perfectly now!", "urgency": "medium", "sentiment": "positive"},
 ]
 # fmt: on
 
