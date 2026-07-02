@@ -380,6 +380,33 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
     )
 
 
+def _compute_output_combos(
+    output_fields: list[str],
+    metadata: SignatureMetadata,
+) -> list[dict[str, str]] | None:
+    """Compute the cartesian product of allowed_values for categorical output fields.
+
+    Returns a list of target dicts (e.g. ``[{"urgency": "high", "sentiment": "positive"}, ...]``)
+    or ``None`` when no output field has ``allowed_values`` (balancing not applicable).
+    """
+    import itertools
+
+    categorical: dict[str, list[str]] = {}
+    for fname in output_fields:
+        if fname == "reasoning":
+            continue
+        meta = metadata.get(fname)
+        if meta and meta.allowed_values:
+            categorical[fname] = meta.allowed_values
+
+    if not categorical:
+        return None
+
+    keys = list(categorical.keys())
+    value_lists = [categorical[k] for k in keys]
+    return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
+
+
 class AutoData:
     def __init__(
         self,
@@ -868,8 +895,23 @@ class AutoData:
 
         self._ensure_metadata(resolved_seeds)
 
-        input_bar = tqdm(total=n, desc="Generating inputs", unit="row", leave=True)
-        inputs = self._generate_inputs(n, resolved_seeds, description, input_bar)
+        output_combos: list[dict[str, str]] | None = None
+        if self.config.balance_outputs and self._sig_metadata is not None:
+            output_combos = _compute_output_combos(
+                self.output_fields, self._sig_metadata
+            )
+            if output_combos is not None:
+                tqdm.write(
+                    f"Balancing outputs across {len(output_combos)} target combos"
+                )
+
+        pool_n = n
+        if output_combos is not None:
+            pool_n = int(n * self.config.oversample_factor)
+            tqdm.write(f"Oversampling: generating {pool_n} rows for balance pool")
+
+        input_bar = tqdm(total=pool_n, desc="Generating inputs", unit="row", leave=True)
+        inputs = self._generate_inputs(pool_n, resolved_seeds, description, input_bar)
         input_bar.close()
 
         output_bar = tqdm(
@@ -881,9 +923,25 @@ class AutoData:
         output_bar.close()
 
         complete_rows = []
-        for inp, out in zip(inputs, outputs):
+        row_scores: list[float] = []
+        for i, (inp, out) in enumerate(zip(inputs, outputs)):
             if out is not None:
                 complete_rows.append({**inp, **out})
+                if quality_scores is not None and i < len(quality_scores):
+                    row_scores.append(quality_scores[i])
+
+        if (
+            self.config.balance_outputs
+            and output_combos is not None
+            and len(complete_rows) > n
+        ):
+            complete_rows, row_scores = self._subsample_balanced(
+                complete_rows, n, row_scores
+            )
+            tqdm.write(f"Rewriting {len(complete_rows)} balanced rows to disk")
+            writer.truncate()
+            for row in complete_rows:
+                writer.write_row(row)
 
         n_written = writer.row_count()
         elapsed = time.time() - start_time
@@ -898,8 +956,89 @@ class AutoData:
             n_failed=n - n_written,
             seed_used=self.config.seed,
             generation_time_seconds=elapsed,
-            quality_scores=quality_scores,
+            quality_scores=row_scores if row_scores else None,
         )
+
+    def _subsample_balanced(
+        self,
+        rows: list[dict[str, Any]],
+        n: int,
+        scores: list[float],
+    ) -> tuple[list[dict[str, Any]], list[float]]:
+        """Greedily select n rows from the pool to maximise per-column balance.
+
+        For each categorical output field, tracks how many times each allowed
+        value has been selected.  On each iteration, picks the row whose
+        output values are most under-represented (highest cumulative deficit
+        across all categorical fields).  Ties are broken randomly.
+        """
+        import random as _rand
+        from collections import Counter
+
+        metadata = self._sig_metadata
+        assert metadata is not None
+
+        categorical_fields: list[str] = []
+        field_values: dict[str, list[str]] = {}
+        for fname in self.output_fields:
+            if fname == "reasoning":
+                continue
+            meta = metadata.get(fname)
+            if meta and meta.allowed_values:
+                categorical_fields.append(fname)
+                field_values[fname] = meta.allowed_values
+
+        if not categorical_fields:
+            return rows[:n], scores[:n]
+
+        target_per_value: dict[str, float] = {}
+        for fname in categorical_fields:
+            target_per_value[fname] = n / len(field_values[fname])
+
+        counts: dict[str, Counter[str]] = {f: Counter() for f in categorical_fields}
+
+        pool = (
+            list(zip(rows, scores))
+            if len(scores) == len(rows)
+            else [(r, 0.0) for r in rows]
+        )
+        rng = _rand.Random(self.config.seed)
+        rng.shuffle(pool)
+
+        selected: list[tuple[dict[str, Any], float]] = []
+
+        for _ in range(min(n, len(pool))):
+            best_idx = -1
+            best_score = -1.0
+            for i, (row, _) in enumerate(pool):
+                score = 0.0
+                for fname in categorical_fields:
+                    val = row.get(fname)
+                    if isinstance(val, str):
+                        val_lower = val.strip().lower()
+                        deficit = target_per_value[fname] - counts[fname][val_lower]
+                        score += max(0.0, deficit)
+                if score > best_score:
+                    best_score = score
+                    best_idx = i
+            if best_idx == -1:
+                break
+            row, sc = pool.pop(best_idx)
+            selected.append((row, sc))
+            for fname in categorical_fields:
+                val = row.get(fname)
+                if isinstance(val, str):
+                    counts[fname][val.strip().lower()] += 1
+
+        result_rows = [r for r, _ in selected]
+        result_scores = [s for _, s in selected]
+
+        tqdm.write("  [balance] final distribution:")
+        for fname in categorical_fields:
+            parts = [f"{v}: {counts[fname].get(v, 0)}" for v in field_values[fname]]
+            tqdm.write(f"    {fname}: {', '.join(parts)}")
+
+        return result_rows, result_scores
 
     def _resolve_seeds(self, seed_examples: Any | None) -> list[dict[str, Any]] | None:
         if seed_examples is None:
