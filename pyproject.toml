@@ -14,7 +14,12 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["dspy>=3.2.1", "pandas>=3.0.3", "pydantic>=2.13.4"]
+dependencies = [
+    "dspy>=3.2.1",
+    "pandas>=3.0.3",
+    "pydantic>=2.13.4",
+    "tqdm>=4.67.3",
+]
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
