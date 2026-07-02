@@ -1,4 +1,6 @@
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -34,6 +36,96 @@ class QualityResult:
     passed: bool
     score: float
     failures: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# String sanitization & validation helpers
+# ---------------------------------------------------------------------------
+
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map symbols
+    "\U0001f1e0-\U0001f1ff"  # flags
+    "\U00002702-\U000027b0"  # dingbats
+    "\U000024c2-\U0001f251"  # enclosed characters
+    "\U0001f900-\U0001f9ff"  # supplemental symbols
+    "\U0001fa00-\U0001fa6f"  # chess symbols
+    "\U0001fa70-\U0001faff"  # symbols extended-A
+    "\U00002600-\U000026ff"  # misc symbols (includes ⚠️)
+    "\U0000fe00-\U0000fe0f"  # variation selectors
+    "\U0000200d"  # zero width joiner
+    "\U00002b50"  # star
+    "\U000023cf-\U000023fa"  # misc technical
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def sanitize_string(value: str) -> str:
+    """Strip emoji, normalize Unicode, collapse whitespace, and trim.
+
+    Returns the cleaned string.  Does **not** raise — safe to call on any input.
+    """
+    # Strip emoji characters
+    cleaned = _EMOJI_RE.sub("", value)
+    # Normalize Unicode to NFC (composed form) — collapses weird codepoints
+    cleaned = unicodedata.normalize("NFC", cleaned)
+    # Collapse runs of whitespace (including non-breaking spaces, narrow
+    # no-break spaces, etc.) into a single ASCII space
+    cleaned = re.sub(r"[\s\u00a0\u200b\u200c\u200d\u202f\u2007\u2060]+", " ", cleaned)
+    return cleaned.strip()
+
+
+# ---------------------------------------------------------------------------
+# Validator factory functions
+# ---------------------------------------------------------------------------
+
+ValidatorFn = Callable[[dict[str, Any]], tuple[bool, str]]
+
+
+def non_empty_validator(*field_names: str) -> ValidatorFn:
+    """Reject rows where any of *field_names* is empty or whitespace-only."""
+
+    def _check(row: dict[str, Any]) -> tuple[bool, str]:
+        for name in field_names:
+            val = row.get(name)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                return False, f"Field '{name}' must not be empty"
+        return True, ""
+
+    return _check
+
+
+def no_emoji_validator(*field_names: str) -> ValidatorFn:
+    """Reject rows where any of *field_names* contains emoji characters."""
+
+    def _check(row: dict[str, Any]) -> tuple[bool, str]:
+        for name in field_names:
+            val = row.get(name)
+            if isinstance(val, str) and _EMOJI_RE.search(val):
+                return False, f"Field '{name}' must not contain emoji"
+        return True, ""
+
+    return _check
+
+
+def enum_validator(field_name: str, allowed: list[str]) -> ValidatorFn:
+    """Reject rows where *field_name* is not one of *allowed* (case-insensitive)."""
+    allowed_lower = [a.lower() for a in allowed]
+
+    def _check(row: dict[str, Any]) -> tuple[bool, str]:
+        val = row.get(field_name)
+        if val is None:
+            return False, f"Field '{field_name}' must not be None"
+        if isinstance(val, str) and val.strip().lower() not in allowed_lower:
+            return False, (
+                f"Field '{field_name}' value '{val}' not in allowed: {allowed}"
+            )
+        return True, ""
+
+    return _check
 
 
 # ---------------------------------------------------------------------------
