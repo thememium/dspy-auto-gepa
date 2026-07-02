@@ -5,7 +5,7 @@ import random
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import dspy
 import pandas as pd
@@ -102,13 +102,13 @@ def _build_output_model(
         if fname == "reasoning":
             continue
         meta = metadata.get(fname)
-        ftype: type = str
+        ftype: Any = str
         if meta and meta.python_type and isinstance(meta.python_type, type):
             ftype = meta.python_type
         if meta and meta.allowed_values:
             from typing import Literal
 
-            ftype = Literal[tuple(meta.allowed_values)]  # type: ignore[valid-type]
+            ftype = Literal.__getitem__(tuple(meta.allowed_values))
         default = ...  # required
         field_defs[fname] = (ftype, default)
     return create_model(name, **field_defs)
@@ -350,7 +350,10 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
     """Build a DSPy Signature with strongly-typed batch output.
 
     The returned signature has ``generated_outputs: list[output_model]`` so DSPy
-    emits a JSON Schema for the LLM rather than a free-form string.
+    emits a JSON Schema for the LLM rather than a free-form string.  The type
+    is set via ``with_updated_fields`` after class creation because static type
+    checkers reject using a runtime variable (``output_model``) as a type
+    argument in a class-body annotation.
     """
 
     class _BatchOutputSignature(dspy.Signature):
@@ -367,11 +370,14 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
         n_to_generate: int = dspy.InputField(
             desc="Number of output objects to generate (must match inputs_json length)"
         )
-        generated_outputs: list[output_model] = dspy.OutputField(
+        generated_outputs: list[Any] = dspy.OutputField(
             desc="List of output objects, one per input, in the same order."
         )
 
-    return _BatchOutputSignature
+    return _BatchOutputSignature.with_updated_fields(
+        "generated_outputs",
+        type_=cast("type | None", list.__class_getitem__((output_model,))),
+    )
 
 
 class AutoData:
