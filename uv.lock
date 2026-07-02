@@ -170,6 +170,20 @@ wheels = [
 ]
 
 [[package]]
+name = "botocore"
+version = "1.43.39"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jmespath" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/03/8800770b04e6b306172af15c7e0e049cb06ae6fb6eff6744a09563c1b80c/botocore-1.43.39.tar.gz", hash = "sha256:a95b90ea13aca409d79cc90d87c75df7db1a104a4c8e93707b62a3593bfdd17d", size = 15640021, upload-time = "2026-07-01T19:37:16.076Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/de/1155cade4db5fb1121b66d9936b5e958b663db446752d47acc56ad5d380a/botocore-1.43.39-py3-none-any.whl", hash = "sha256:7cd5fab9d33f487777e2c508573bca6ae230779230263d47a617f4af960d3003", size = 15321601, upload-time = "2026-07-01T19:37:12.952Z" },
+]
+
+[[package]]
 name = "cachetools"
 version = "7.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -452,6 +466,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "botocore" },
     { name = "deptry" },
     { name = "isort" },
     { name = "poethepoet" },
@@ -473,6 +488,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "botocore", specifier = ">=1.43.39" },
     { name = "deptry", specifier = ">=0.25.1" },
     { name = "isort", specifier = ">=8.0.1" },
     { name = "poethepoet", specifier = ">=0.46.0" },
@@ -868,6 +884,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/95/a06692b29e77473f286e1ec1f426d3ca44d7b5843be8ad21d7a5f3fcdcc0/jiter-0.15.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:b6c0ffae686c39bf3737be60793783267628783ea42545632c10b291105aee45", size = 305128, upload-time = "2026-05-19T10:09:43.657Z" },
     { url = "https://files.pythonhosted.org/packages/23/85/7270d7ad41d6061a25b950c6bf91d638bd9aacb113200a8c8d57a055fd67/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d54fb5b31dea401a41af3f8a7d2512e9b6a6a005491e6166c7e4ffab9639a9c", size = 340459, upload-time = "2026-05-19T10:09:45.452Z" },
     { url = "https://files.pythonhosted.org/packages/c8/8d/302cb2057b7513327b4d575cff6b1d066ee6431a5357fc3f8867cd684406/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54d5d6090cdc1b7c9e780dfb04949a990adb1e301a2fc0bbcee7de4638d33f9a", size = 344469, upload-time = "2026-05-19T10:09:46.864Z" },
+]
+
+[[package]]
+name = "jmespath"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/59/322338183ecda247fb5d1763a6cbe46eff7222eaeebafd9fa65d4bf5cb11/jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d", size = 27377, upload-time = "2026-01-22T16:35:26.279Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/14/2f/967ba146e6d58cf6a652da73885f52fc68001525b4197effc174321d70b4/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64", size = 20419, upload-time = "2026-01-22T16:35:24.919Z" },
 ]
 
 [[package]]

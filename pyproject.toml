@@ -15,11 +15,11 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "dspy>=3.2.1",
-    "pandas>=3.0.3",
-    "pyarrow>=24.0.0",
-    "pydantic>=2.13.4",
-    "tqdm>=4.67.3",
+  "dspy>=3.2.1",
+  "pandas>=3.0.3",
+  "pyarrow>=24.0.0",
+  "pydantic>=2.13.4",
+  "tqdm>=4.67.3",
 ]
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
@@ -41,6 +41,7 @@ include = ["dspy_auto_gepa*"]
 
 [dependency-groups]
 dev = [
+  "botocore>=1.43.39",
   "deptry>=0.25.1",
   "isort>=8.0.1",
   "poethepoet>=0.46.0",
@@ -59,8 +60,8 @@ known_first_party = ["dspy_auto_gepa"]
 per_rule_ignores = { DEP002 = ["pandas", "pyarrow"] }
 
 [tool.poe.tasks]
-example-basic = "uv run examples/basic.py"
 example-data = "uv run examples/data.py"
+example-basic = "uv run examples/basic.py"
 clean-full = "sh -c 'uv run isort . && uv run ruff check . --fix && uv run ruff format . && uv run deptry . && uv run ty check'"
 clean = "sh -c 'uv run isort . && uv run ruff format .'"
 test = "uv run pytest tests/ -v"
