@@ -2,7 +2,7 @@
 
 import dspy
 
-from dspy_auto_gepa import AutoData, AutoDataConfig
+from dspy_auto_gepa import AutoData
 
 # ---------------------------------------------------------------------------
 # Configure models
@@ -58,7 +58,6 @@ def main() -> None:
         module=program,
         data_lm=data_lm,
         name=name,
-        config=AutoDataConfig(n=20, seed=42),
     )
 
     print(f"Input fields:  {gen.input_fields}")
@@ -67,9 +66,10 @@ def main() -> None:
     output_path = f".auto_gepa/{name}/generated/rows.jsonl"
 
     result = gen.generate(
-        n=20,
+        n=100,
         seed_examples=seed_rows,
         output_path=output_path,
+        force=True,
     )
 
     print(f"\nGenerated {result.n_produced} of {result.n_requested} rows")
