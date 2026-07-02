@@ -427,7 +427,7 @@ class AutoGEPA:
         self,
         n: int = 100,
         data_lm: dspy.LM | None = None,
-        seed_examples: list[dict] | str | None = None,
+        seed_examples: Any | None = None,
         schema: Any | None = None,
         force: bool = False,
         output_path: str | Path | None = None,
@@ -438,7 +438,8 @@ class AutoGEPA:
             n: Number of rows to generate.
             data_lm: LM for data generation. Defaults to constructor's
                 data_lm or metric_lm.
-            seed_examples: Seed data (list of dicts or file path).
+            seed_examples: Seed data — list[dict], DataFrame, file path
+                (.jsonl, .json, .csv, .parquet), or any object _to_dicts supports.
             schema: Optional Pydantic model for output schema override.
             force: If True, regenerate even if output exists.
             output_path: Output file path. Format auto-detected from extension.
