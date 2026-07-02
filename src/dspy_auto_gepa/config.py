@@ -47,7 +47,7 @@ class AutoDataConfig:
     seed: int = 42
     max_retries: int = 8
     num_threads: int = 16
-    chunk_size: int = 5
+    chunk_size: int = 10
     diversity_threshold: float = 0.3
     judge_enabled: bool = True
     validators_enabled: bool = True
@@ -55,6 +55,9 @@ class AutoDataConfig:
     rejection_sampling_enabled: bool = True
     data_lm: dspy.LM | None = None
     judge_lm: dspy.LM | None = None
+    balance_outputs: bool = True
+    balance_tolerance: float = 0.15
+    oversample_factor: float = 2.0
 
     def __post_init__(self) -> None:
         if self.n <= 0:
