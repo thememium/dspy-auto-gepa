@@ -7,6 +7,7 @@ from typing import Any
 
 import dspy
 import pandas as pd
+from tqdm import tqdm
 
 from .config import AutoDataConfig
 from .data import (
@@ -16,7 +17,6 @@ from .data import (
     infer_fields_from_module,
 )
 from .quality import (
-    DiversityChecker,
     LLMJudge,
     Validator,
     enum_validator,
@@ -176,27 +176,49 @@ def _build_validator(
 class _InputGenerationSignature(dspy.Signature):
     """Generate realistic input data for a task.
 
+    CRITICAL: Every generated input MUST be completely unique. Do NOT repeat,
+    closely paraphrase, or slightly modify any existing input. Each new input
+    must cover a different scenario, use different wording, and represent a
+    distinct real-world case.
+
+    Input values can be strings, numbers, booleans, lists, or nested dicts.
+    Match the structure defined in the field spec. For nested/complex types,
+    vary the structure and content — not just top-level values.
+
     Return a JSON array of input objects. Each object must have exactly the
-    specified input field names as keys. Values must match the type and
-    constraint spec. Do NOT include emoji or special Unicode characters.
+    specified input field names as keys. Do NOT include emoji or special
+    Unicode characters in string values.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
     input_field_spec: str = dspy.InputField(
         desc=(
             "JSON spec of input fields with types and constraints. "
-            'Example: {"message": {"type": "str", "desc": "The support ticket text"}}'
+            'Example: {"message": {"type": "str", "desc": "The support ticket text"}, '
+            '"metadata": {"type": "dict", "desc": "Nested object with category and priority"}}'
         )
     )
-    existing_inputs_json: str = dspy.InputField(
-        desc="JSON array of already-generated inputs for diversity reference",
+    recent_inputs_json: str = dspy.InputField(
+        desc=(
+            "JSON array of the most recent inputs generated. Use these to ensure "
+            "your new inputs are DIFFERENT in topic, wording, and scenario."
+        ),
         default="[]",
+    )
+    covered_themes: str = dspy.InputField(
+        desc=(
+            "Comma-separated list of themes/values already covered. You MUST "
+            "generate inputs that explore NEW themes not in this list."
+        ),
+        default="",
     )
     n_to_generate: int = dspy.InputField(desc="Number of input objects to generate")
     generated_inputs: str = dspy.OutputField(
         desc=(
             "JSON array of input objects. Each object must have exactly the "
-            "specified field names. No emoji. No empty strings."
+            "specified field names. No emoji. No empty strings. Every entry "
+            "MUST be completely different from all existing inputs in both "
+            "structure and content."
         )
     )
 
@@ -308,79 +330,168 @@ class AutoData:
         n: int,
         seed_examples: list[dict[str, Any]] | None,
         description: str,
+        progress: tqdm | None = None,
     ) -> list[dict[str, Any]]:
         predictor = dspy.Predict(_InputGenerationSignature)
         all_inputs: list[dict[str, Any]] = []
-        batch_size = min(10, n)
         max_retries = self.config.max_retries
-        diversity_checker = (
-            DiversityChecker(diversity_threshold=self.config.diversity_threshold)
-            if self.config.diversity_enabled
-            else None
-        )
         metadata = self._ensure_metadata(seed_examples)
         input_spec = self._field_spec_json(self.input_fields, metadata)
         validator = _build_validator(self.input_fields, metadata)
 
-        while len(all_inputs) < n:
-            remaining = n - len(all_inputs)
-            current_batch = min(batch_size, remaining)
+        all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
+        covered_values: dict[str, set[str]] = {f: set() for f in self.input_fields}
+        for row in all_existing:
+            for f in self.input_fields:
+                val = row.get(f)
+                if isinstance(val, str) and val.strip():
+                    covered_values[f].add(val.strip().lower())
 
-            existing_json = json.dumps(
-                [d for d in (seed_examples or [])[:5]] + all_inputs[-5:],
-                default=str,
-            )
+        def _canonicalize(value: Any) -> str:
+            if value is None:
+                return "__none__"
+            if isinstance(value, str):
+                return sanitize_string(value).lower()
+            if isinstance(value, (int, float, bool)):
+                return str(value)
+            if isinstance(value, dict):
+                return json.dumps(value, sort_keys=True, default=str)
+            if isinstance(value, (list, tuple)):
+                return json.dumps(list(value), sort_keys=True, default=str)
+            if hasattr(value, "model_dump"):
+                return json.dumps(value.model_dump(), sort_keys=True, default=str)
+            if hasattr(value, "dict"):
+                return json.dumps(value.dict(), sort_keys=True, default=str)
+            return str(value)
 
-            for attempt in range(max_retries):
+        def _row_fingerprint(row: dict[str, Any]) -> str:
+            parts = []
+            for k in sorted(row.keys()):
+                if k in self.input_fields:
+                    parts.append(f"{k}={_canonicalize(row[k])}")
+            return "|".join(parts)
+
+        def _is_duplicate(row: dict[str, Any]) -> bool:
+            fp = _row_fingerprint(row)
+            return any(_row_fingerprint(e) == fp for e in all_existing)
+
+        def _covered_themes_str() -> str:
+            parts = []
+            for f, vals in covered_values.items():
+                if vals:
+                    parts.append(f"{f}: {', '.join(sorted(vals))}")
+            return "; ".join(parts)
+
+        def _generate_one_batch(
+            recent_json: str, themes_str: str, batch_size: int
+        ) -> list[dict[str, Any]]:
+            for _attempt in range(max_retries):
                 try:
                     with dspy.settings.context(lm=self.data_lm):
                         result = predictor(
                             task_description=description,
                             input_field_spec=input_spec,
-                            existing_inputs_json=existing_json,
-                            n_to_generate=current_batch,
+                            recent_inputs_json=recent_json,
+                            covered_themes=themes_str,
+                            n_to_generate=batch_size,
                         )
-
                     parsed = json.loads(result.generated_inputs)
                     if not isinstance(parsed, list):
                         parsed = [parsed]
-
-                    validated = []
-                    validation_errors: list[str] = []
-                    for row in parsed:
-                        if not isinstance(row, dict):
-                            continue
-                        clean_row, errs = _validate_and_sanitize_row(
-                            row, self.input_fields, metadata
-                        )
-                        if errs:
-                            validation_errors.extend(errs)
-                            continue
-                        val_result = validator.validate(clean_row)
-                        if not val_result.is_valid:
-                            validation_errors.extend(val_result.failures)
-                            continue
-                        validated.append(clean_row)
-
-                    if not validated:
-                        continue
-
-                    if diversity_checker and len(all_inputs) + len(validated) > 1:
-                        all_texts = [
-                            " ".join(str(row.get(k, "")) for k in self.input_fields)
-                            for row in all_inputs + validated
-                        ]
-                        div_result = diversity_checker.check(all_texts)
-                        if not div_result.is_diverse and attempt < max_retries - 1:
-                            continue
-
-                    all_inputs.extend(validated)
-                    break
-
+                    return [r for r in parsed if isinstance(r, dict)]
                 except (json.JSONDecodeError, ValueError, TypeError):
-                    if attempt == max_retries - 1:
-                        pass
                     continue
+            return []
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        with dspy.settings.context(lm=self.data_lm):
+            while len(all_inputs) < n:
+                chunk_batches = min(
+                    self.config.chunk_size,
+                    (n - len(all_inputs) + 9) // 10,
+                )
+
+                recent_json = json.dumps(recent_window, default=str)
+                themes_str = _covered_themes_str()
+
+                tasks = []
+                for _ in range(chunk_batches):
+                    remaining = n - len(all_inputs)
+                    batch_size = min(10, remaining)
+                    example = dspy.Example(
+                        task_description=description,
+                        input_field_spec=input_spec,
+                        recent_inputs_json=recent_json,
+                        covered_themes=themes_str,
+                        n_to_generate=batch_size,
+                    ).with_inputs(
+                        "task_description",
+                        "input_field_spec",
+                        "recent_inputs_json",
+                        "covered_themes",
+                        "n_to_generate",
+                    )
+                    tasks.append((predictor, example))
+
+                exec_results = parallel(tasks)
+
+                accepted_this_chunk = 0
+                for result in exec_results:
+                    if isinstance(result, Exception):
+                        continue
+                    generated = result if isinstance(result, list) else [result]
+                    for item in generated:
+                        if isinstance(item, dspy.Prediction):
+                            try:
+                                parsed = json.loads(item.generated_inputs)
+                                if not isinstance(parsed, list):
+                                    parsed = [parsed]
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                continue
+                        elif isinstance(item, dict):
+                            parsed = [item]
+                        else:
+                            continue
+
+                        for row in parsed:
+                            if not isinstance(row, dict):
+                                continue
+                            clean_row, errs = _validate_and_sanitize_row(
+                                row, self.input_fields, metadata
+                            )
+                            if errs:
+                                continue
+                            val_result = validator.validate(clean_row)
+                            if not val_result.is_valid:
+                                continue
+                            if _is_duplicate(clean_row):
+                                continue
+
+                            all_inputs.append(clean_row)
+                            all_existing.append(clean_row)
+                            recent_window.append(clean_row)
+                            if len(recent_window) > 20:
+                                recent_window = recent_window[-20:]
+                            for f in self.input_fields:
+                                val = clean_row.get(f)
+                                if isinstance(val, str) and val.strip():
+                                    covered_values[f].add(val.strip().lower())
+
+                            accepted_this_chunk += 1
+                            if progress is not None:
+                                progress.update(1)
+                            if len(all_inputs) >= n:
+                                break
+                        if len(all_inputs) >= n:
+                            break
+                    if len(all_inputs) >= n:
+                        break
 
         return all_inputs[:n]
 
@@ -388,6 +499,8 @@ class AutoData:
         self,
         inputs: list[dict[str, Any]],
         description: str,
+        writer: StreamingDatasetWriter | None = None,
+        progress: tqdm | None = None,
     ) -> list[dict[str, Any]]:
         predictor = dspy.Predict(_OutputGenerationSignature)
         all_outputs: list[dict[str, Any]] = []
@@ -461,10 +574,16 @@ class AutoData:
 
             if row_output is not None:
                 all_outputs.append(row_output)
+                if writer is not None:
+                    writer.write_row({**inp, **row_output})
             else:
-                all_outputs.append(
-                    {k: "" for k in self.output_fields if k != "reasoning"}
-                )
+                fallback = {k: "" for k in self.output_fields if k != "reasoning"}
+                all_outputs.append(fallback)
+                if writer is not None:
+                    writer.write_row({**inp, **fallback})
+
+            if progress is not None:
+                progress.update(1)
 
         return all_outputs
 
@@ -536,16 +655,22 @@ class AutoData:
         )
 
         self._ensure_metadata(resolved_seeds)
-        inputs = self._generate_inputs(n, resolved_seeds, description)
-        outputs = self._generate_outputs(inputs, description)
+
+        input_bar = tqdm(total=n, desc="Generating inputs", unit="row", leave=True)
+        inputs = self._generate_inputs(n, resolved_seeds, description, input_bar)
+        input_bar.close()
+
+        output_bar = tqdm(
+            total=len(inputs), desc="Generating outputs", unit="row", leave=True
+        )
+        outputs = self._generate_outputs(
+            inputs, description, writer=writer, progress=output_bar
+        )
+        output_bar.close()
 
         complete_rows = []
         for inp, out in zip(inputs, outputs):
             complete_rows.append({**inp, **out})
-
-        writer = StreamingDatasetWriter(output_path)
-        for row in complete_rows:
-            writer.write_row(row)
 
         quality_scores = None
         if self.config.judge_enabled:
@@ -556,6 +681,10 @@ class AutoData:
                 quality_scores.append(qr.score)
 
         elapsed = time.time() - start_time
+        tqdm.write(
+            f"Generated {len(complete_rows)}/{n} rows in {elapsed:.1f}s "
+            f"({len(complete_rows) / elapsed:.1f} rows/s)"
+        )
         return GenerationResult(
             rows=complete_rows,
             n_requested=n,
