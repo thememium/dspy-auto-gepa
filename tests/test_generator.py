@@ -592,3 +592,354 @@ class TestAutoDataGeneration:
         bad_file.write_text("<data/>")
         with pytest.raises(ValueError, match="Unsupported file extension"):
             gen._resolve_seeds(str(bad_file))
+
+
+# ---------------------------------------------------------------------------
+# Validation & sanitization tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidateAndSanitizeRow:
+    """Tests for _validate_and_sanitize_row."""
+
+    def test_strips_emoji(self) -> None:
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        row = {"message": "\u26a0\ufe0f Server is down", "urgency": "high"}
+        cleaned, errors = _validate_and_sanitize_row(row, ["message", "urgency"])
+        assert "\u26a0" not in cleaned["message"]
+        assert "Server is down" in cleaned["message"]
+        assert errors == []
+
+    def test_rejects_empty_field(self) -> None:
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        row = {"message": "", "urgency": "high"}
+        _, errors = _validate_and_sanitize_row(row, ["message", "urgency"])
+        assert any("must not be empty" in e for e in errors)
+
+    def test_rejects_whitespace_only(self) -> None:
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        row = {"message": "   ", "urgency": "high"}
+        _, errors = _validate_and_sanitize_row(row, ["message", "urgency"])
+        assert any("must not be empty" in e for e in errors)
+
+    def test_rejects_enum_violation(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+        row = {"urgency": "critical"}
+        _, errors = _validate_and_sanitize_row(row, ["urgency"], metadata)
+        assert any("not in allowed" in e for e in errors)
+
+    def test_accepts_valid_enum(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+        row = {"urgency": "high"}
+        cleaned, errors = _validate_and_sanitize_row(row, ["urgency"], metadata)
+        assert errors == []
+        assert cleaned["urgency"] == "high"
+
+    def test_normalizes_unicode_whitespace(self) -> None:
+        from dspy_auto_gepa.generator import _validate_and_sanitize_row
+
+        row = {"message": "Hello\u202fWorld\u200b"}
+        cleaned, _ = _validate_and_sanitize_row(row, ["message"])
+        assert "\u202f" not in cleaned["message"]
+        assert "\u200b" not in cleaned["message"]
+
+
+class TestBuildValidator:
+    """Tests for _build_validator."""
+
+    def test_rejects_empty(self) -> None:
+        from dspy_auto_gepa.generator import _build_validator
+
+        v = _build_validator(["message"])
+        result = v.validate({"message": ""})
+        assert not result.is_valid
+
+    def test_rejects_emoji(self) -> None:
+        from dspy_auto_gepa.generator import _build_validator
+
+        v = _build_validator(["message"])
+        result = v.validate({"message": "\U0001f600 hello"})
+        assert not result.is_valid
+
+    def test_rejects_bad_enum(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+        from dspy_auto_gepa.generator import _build_validator
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+        v = _build_validator(["urgency"], metadata)
+        result = v.validate({"urgency": "critical"})
+        assert not result.is_valid
+
+    def test_passes_valid_row(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+        from dspy_auto_gepa.generator import _build_validator
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+        v = _build_validator(["urgency"], metadata)
+        result = v.validate({"urgency": "high"})
+        assert result.is_valid
+
+
+# ---------------------------------------------------------------------------
+# Signature metadata extraction tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSignatureMetadata:
+    """Tests for extract_signature_metadata."""
+
+    def test_extracts_fields(self) -> None:
+        from dspy_auto_gepa.data import extract_signature_metadata
+
+        meta = extract_signature_metadata(TicketSignature)
+        names = [f.name for f in meta.fields]
+        assert "message" in names
+        assert "urgency" in names
+        assert "sentiment" in names
+
+    def test_input_output_classification(self) -> None:
+        from dspy_auto_gepa.data import extract_signature_metadata
+
+        meta = extract_signature_metadata(TicketSignature)
+        assert meta.input_fields == ["message"]
+        assert "urgency" in meta.output_fields
+        assert "sentiment" in meta.output_fields
+
+    def test_infers_enum_from_seeds(self) -> None:
+        from dspy_auto_gepa.data import extract_signature_metadata
+
+        seeds = [
+            {"urgency": "high"},
+            {"urgency": "low"},
+            {"urgency": "medium"},
+            {"urgency": "high"},
+        ]
+        meta = extract_signature_metadata(TicketSignature, seed_examples=seeds)
+        urg = meta.get("urgency")
+        assert urg is not None
+        assert urg.allowed_values is not None
+        assert set(urg.allowed_values) == {"high", "low", "medium"}
+
+    def test_no_enum_when_high_cardinality(self) -> None:
+        from dspy_auto_gepa.data import extract_signature_metadata
+
+        seeds = [{"message": f"msg{i}"} for i in range(20)]
+        meta = extract_signature_metadata(TicketSignature, seed_examples=seeds)
+        msg = meta.get("message")
+        assert msg is not None
+        assert msg.allowed_values is None
+
+    def test_to_prompt_spec(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        meta = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="How urgent",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+            ],
+        )
+        spec = meta.to_prompt_spec()
+        assert "urgency" in spec
+        assert "low" in spec
+        assert "high" in spec
+        assert "How urgent" in spec
+
+
+# ---------------------------------------------------------------------------
+# Field spec in generation prompts
+# ---------------------------------------------------------------------------
+
+
+class TestFieldSpecInPrompts:
+    """Tests that _field_spec_json produces correct spec for LLM prompts."""
+
+    def test_field_spec_includes_allowed_values(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+        from dspy_auto_gepa.generator import AutoData
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="test",
+        )
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="Urgency level",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+        )
+        spec = gen._field_spec_json(["urgency"], metadata)
+        parsed = json.loads(spec)
+        assert parsed["urgency"]["allowed"] == ["low", "medium", "high"]
+        assert parsed["urgency"]["desc"] == "Urgency level"
+
+
+# ---------------------------------------------------------------------------
+# Generation rejects bad data (mocked LLM)
+# ---------------------------------------------------------------------------
+
+
+class TestGenerationRejectsBadData:
+    """Tests that generation retries when LLM produces bad data."""
+
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_rejects_empty_input_and_retries(self, mock_predict_cls: MagicMock) -> None:
+        mock_predictor = MagicMock()
+        mock_predictor.side_effect = [
+            MagicMock(generated_inputs='[{"message": ""}]'),
+            MagicMock(generated_inputs='[{"message": "valid message"}]'),
+        ]
+        mock_predict_cls.return_value = mock_predictor
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1),
+        )
+
+        inputs = gen._generate_inputs(1, None, "Classify tickets")
+        assert len(inputs) == 1
+        assert inputs[0]["message"] == "valid message"
+        assert mock_predictor.call_count == 2
+
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_rejects_emoji_input_and_retries(self, mock_predict_cls: MagicMock) -> None:
+        mock_predictor = MagicMock()
+        mock_predictor.side_effect = [
+            MagicMock(generated_inputs='[{"message": "\u26a0\ufe0f server down"}]'),
+            MagicMock(generated_inputs='[{"message": "server down"}]'),
+        ]
+        mock_predict_cls.return_value = mock_predictor
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1),
+        )
+
+        inputs = gen._generate_inputs(1, None, "Classify tickets")
+        assert len(inputs) == 1
+        assert "\u26a0" not in inputs[0]["message"]
+
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_rejects_bad_enum_output_and_retries(
+        self, mock_predict_cls: MagicMock
+    ) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        call_count = 0
+
+        def predict_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return MagicMock(
+                    generated_output='{"urgency": "critical", "sentiment": "negative"}'
+                )
+            return MagicMock(
+                generated_output='{"urgency": "high", "sentiment": "negative"}'
+            )
+
+        mock_predictor = MagicMock()
+        mock_predictor.side_effect = predict_side_effect
+        mock_predict_cls.return_value = mock_predictor
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1, judge_enabled=False),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+                FieldMetadata(
+                    name="sentiment",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["positive", "neutral", "negative"],
+                ),
+            ],
+            output_fields=["urgency", "sentiment"],
+        )
+
+        outputs = gen._generate_outputs(
+            [{"message": "server down"}],
+            "Classify tickets",
+        )
+
+        assert len(outputs) == 1
+        assert outputs[0]["urgency"] == "high"
