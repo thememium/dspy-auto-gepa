@@ -173,3 +173,119 @@ def test_rejection_sampler_validator_fails():
     result = sampler.sample({"text": "hello"})
     assert result.passed is False
     assert "bad row" in result.failures
+
+
+# ---------------------------------------------------------------------------
+# sanitize_string
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_string_strips_emoji():
+    from dspy_auto_gepa.quality import sanitize_string
+
+    assert "\u26a0" not in sanitize_string("\u26a0\ufe0f Server down")
+    assert "Server down" in sanitize_string("\u26a0\ufe0f Server down")
+
+
+def test_sanitize_string_normalizes_whitespace():
+    from dspy_auto_gepa.quality import sanitize_string
+
+    result = sanitize_string("hello\u202fworld\u200b")
+    assert result == "hello world"
+
+
+def test_sanitize_string_strips_emoji_flag():
+    from dspy_auto_gepa.quality import sanitize_string
+
+    result = sanitize_string("\U0001f1fa\U0001f1f8 USA")
+    assert result.strip() == "USA"
+
+
+# ---------------------------------------------------------------------------
+# non_empty_validator
+# ---------------------------------------------------------------------------
+
+
+def test_non_empty_validator_passes():
+    from dspy_auto_gepa.quality import non_empty_validator
+
+    v = non_empty_validator("name")
+    ok, _ = v({"name": "hello"})
+    assert ok
+
+
+def test_non_empty_validator_fails_empty():
+    from dspy_auto_gepa.quality import non_empty_validator
+
+    v = non_empty_validator("name")
+    ok, reason = v({"name": ""})
+    assert not ok
+    assert "must not be empty" in reason
+
+
+def test_non_empty_validator_fails_none():
+    from dspy_auto_gepa.quality import non_empty_validator
+
+    v = non_empty_validator("name")
+    ok, _ = v({"name": None})
+    assert not ok
+
+
+# ---------------------------------------------------------------------------
+# no_emoji_validator
+# ---------------------------------------------------------------------------
+
+
+def test_no_emoji_validator_passes():
+    from dspy_auto_gepa.quality import no_emoji_validator
+
+    v = no_emoji_validator("text")
+    ok, _ = v({"text": "hello world"})
+    assert ok
+
+
+def test_no_emoji_validator_fails_emoji():
+    from dspy_auto_gepa.quality import no_emoji_validator
+
+    v = no_emoji_validator("text")
+    ok, reason = v({"text": "\U0001f600 hello"})
+    assert not ok
+    assert "must not contain emoji" in reason
+
+
+def test_no_emoji_validator_fails_warning_sign():
+    from dspy_auto_gepa.quality import no_emoji_validator
+
+    v = no_emoji_validator("text")
+    ok, _ = v({"text": "\u26a0\ufe0f warning"})
+    assert not ok
+
+
+# ---------------------------------------------------------------------------
+# enum_validator
+# ---------------------------------------------------------------------------
+
+
+def test_enum_validator_passes():
+    from dspy_auto_gepa.quality import enum_validator
+
+    v = enum_validator("urgency", ["low", "medium", "high"])
+    ok, _ = v({"urgency": "high"})
+    assert ok
+
+
+def test_enum_validator_passes_case_insensitive():
+    from dspy_auto_gepa.quality import enum_validator
+
+    v = enum_validator("urgency", ["Low", "Medium", "High"])
+    ok, _ = v({"urgency": "high"})
+    assert ok
+
+
+def test_enum_validator_fails():
+    from dspy_auto_gepa.quality import enum_validator
+
+    v = enum_validator("urgency", ["low", "medium", "high"])
+    ok, reason = v({"urgency": "critical"})
+    assert not ok
+    assert "not in allowed" in reason
