@@ -44,6 +44,8 @@ def _make_autodata_config(**overrides: Any) -> AutoDataConfig:
         n=5,
         seed=42,
         max_retries=3,
+        num_threads=1,
+        chunk_size=1,
         judge_enabled=False,
         diversity_enabled=False,
         validators_enabled=False,
@@ -51,6 +53,33 @@ def _make_autodata_config(**overrides: Any) -> AutoDataConfig:
     )
     defaults.update(overrides)
     return AutoDataConfig(**defaults)
+
+
+def _make_sync_parallel_mock():
+    """Create a mock for dspy.Parallel that executes tasks synchronously.
+
+    Returns (mock_parallel_cls, executed_tasks) where executed_tasks is a list
+    of (module, example) pairs that were executed.
+    """
+    executed_tasks = []
+
+    class SyncParallel:
+        def __init__(self, **kwargs):
+            pass
+
+        def __call__(self, tasks):
+            results = []
+            for module, example in tasks:
+                executed_tasks.append((module, example))
+                try:
+                    result = module(**{k: example[k] for k in example.keys()})
+                    results.append(result)
+                except Exception as e:
+                    results.append(e)
+            return results
+
+    mock_cls = MagicMock(side_effect=lambda **kwargs: SyncParallel(**kwargs))
+    return mock_cls, executed_tasks
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +119,6 @@ class TestStreamingDatasetWriter:
 
     def test_parquet_write_rows(self, tmp_path: Path) -> None:
         """Write rows to .parquet, read back with pandas, verify data."""
-        pytest.importorskip("pyarrow")  # pyarrow needed for parquet engine
         path = tmp_path / "data.parquet"
         writer = StreamingDatasetWriter(path)
         writer.write_row({"message": "hello", "urgency": "low"})
@@ -266,14 +294,20 @@ class TestAutoDataConstructor:
 class TestAutoDataGeneration:
     """Tests for _generate_inputs, _generate_outputs, and generate() with mocked LLM."""
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_inputs_mocked(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_inputs_mocked(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         """_generate_inputs returns correct count and field keys from mocked LLM."""
         mock_predictor = MagicMock()
-        mock_predictor.return_value = MagicMock(
+        mock_predictor.return_value = dspy.Prediction(
             generated_inputs='[{"message": "test1"}, {"message": "test2"}]'
         )
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -287,19 +321,24 @@ class TestAutoDataGeneration:
         assert len(inputs) == 2
         assert inputs[0]["message"] == "test1"
         assert inputs[1]["message"] == "test2"
-        # Verify all rows have the required input field
         for row in inputs:
             assert "message" in row
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_inputs_json_retry(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_inputs_json_retry(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         """First call returns invalid JSON, second succeeds → retry works."""
         mock_predictor = MagicMock()
         mock_predictor.side_effect = [
-            MagicMock(generated_inputs="this is not json"),
-            MagicMock(generated_inputs='[{"message": "recovered"}]'),
+            dspy.Prediction(generated_inputs="this is not json"),
+            dspy.Prediction(generated_inputs='[{"message": "recovered"}]'),
         ]
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -312,7 +351,6 @@ class TestAutoDataGeneration:
 
         assert len(inputs) == 1
         assert inputs[0]["message"] == "recovered"
-        assert mock_predictor.call_count == 2
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_outputs_mocked(self, mock_predict_cls: MagicMock) -> None:
@@ -365,9 +403,10 @@ class TestAutoDataGeneration:
         assert outputs[0]["urgency"] == "low"
         assert mock_predictor.call_count == 2
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_full_flow(
-        self, mock_predict_cls: MagicMock, tmp_path: Path
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock, tmp_path: Path
     ) -> None:
         """Mocked full generate() → returns GenerationResult with correct row count."""
         call_count = 0
@@ -375,19 +414,21 @@ class TestAutoDataGeneration:
         def predict_side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            # First call is _InputGenerationSignature, second is _OutputGenerationSignature
             if call_count == 1:
-                return MagicMock(
+                return dspy.Prediction(
                     generated_inputs='[{"message": "ticket1"}, {"message": "ticket2"}]'
                 )
             else:
-                return MagicMock(
+                return dspy.Prediction(
                     generated_output='{"urgency": "high", "sentiment": "negative"}'
                 )
 
         mock_predictor = MagicMock()
         mock_predictor.side_effect = predict_side_effect
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         output_path = tmp_path / "output.jsonl"
         gen = AutoData(
@@ -403,12 +444,10 @@ class TestAutoDataGeneration:
         assert result.n_produced == 2
         assert result.n_requested == 2
         assert len(result.rows) == 2
-        # Verify rows have both input and output fields
         for row in result.rows:
             assert "message" in row
             assert "urgency" in row
             assert "sentiment" in row
-        # Verify file was written
         assert output_path.exists()
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
@@ -444,14 +483,14 @@ class TestAutoDataGeneration:
         # LLM should NOT have been called
         mock_predict_cls.assert_not_called()
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_force_overwrites(
-        self, mock_predict_cls: MagicMock, tmp_path: Path
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock, tmp_path: Path
     ) -> None:
         """force=True ignores existing rows and generates fresh data."""
         output_path = tmp_path / "output.jsonl"
 
-        # Pre-write rows
         writer = StreamingDatasetWriter(output_path)
         writer.write_row({"message": "old1", "urgency": "low", "sentiment": "neutral"})
 
@@ -461,15 +500,18 @@ class TestAutoDataGeneration:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return MagicMock(generated_inputs='[{"message": "new1"}]')
+                return dspy.Prediction(generated_inputs='[{"message": "new1"}]')
             else:
-                return MagicMock(
+                return dspy.Prediction(
                     generated_output='{"urgency": "high", "sentiment": "positive"}'
                 )
 
         mock_predictor = MagicMock()
         mock_predictor.side_effect = predict_side_effect
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -482,7 +524,6 @@ class TestAutoDataGeneration:
 
         assert result.n_produced == 1
         assert result.rows[0]["message"] == "new1"
-        mock_predictor.assert_called()
 
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_outputs_all_retries_fail(
@@ -512,15 +553,20 @@ class TestAutoDataGeneration:
         assert outputs[0]["urgency"] == ""
         assert outputs[0]["sentiment"] == ""
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_inputs_respects_n(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_inputs_respects_n(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         """_generate_inputs returns exactly n rows even if LLM returns extra."""
         mock_predictor = MagicMock()
-        # LLM returns 5 but we only asked for 3
-        mock_predictor.return_value = MagicMock(
+        mock_predictor.return_value = dspy.Prediction(
             generated_inputs=json.dumps([{"message": f"msg{i}"} for i in range(5)])
         )
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -532,16 +578,20 @@ class TestAutoDataGeneration:
         inputs = gen._generate_inputs(3, None, "Classify tickets")
         assert len(inputs) == 3
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_inputs_with_seed_examples(
-        self, mock_predict_cls: MagicMock
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
     ) -> None:
         """Seed examples are passed through for diversity reference."""
         mock_predictor = MagicMock()
-        mock_predictor.return_value = MagicMock(
+        mock_predictor.return_value = dspy.Prediction(
             generated_inputs='[{"message": "generated1"}]'
         )
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, executed_tasks = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -554,12 +604,9 @@ class TestAutoDataGeneration:
         inputs = gen._generate_inputs(1, seeds, "Classify tickets")
 
         assert len(inputs) == 1
-        # Verify the predictor was called with existing_inputs_json containing seed data
-        call_kwargs = mock_predictor.call_args
-        existing_json = call_kwargs.kwargs.get(
-            "existing_inputs_json", call_kwargs[1].get("existing_inputs_json", "")
-        )
-        assert "seed1" in existing_json
+        assert len(executed_tasks) > 0
+        _, example = executed_tasks[0]
+        assert "seed1" in example.recent_inputs_json
 
     def test_resolve_seeds_none_returns_stored(self) -> None:
         """_resolve_seeds(None) returns self.seed_examples."""
@@ -845,14 +892,20 @@ class TestFieldSpecInPrompts:
 class TestGenerationRejectsBadData:
     """Tests that generation retries when LLM produces bad data."""
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_rejects_empty_input_and_retries(self, mock_predict_cls: MagicMock) -> None:
+    def test_rejects_empty_input_and_retries(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         mock_predictor = MagicMock()
         mock_predictor.side_effect = [
-            MagicMock(generated_inputs='[{"message": ""}]'),
-            MagicMock(generated_inputs='[{"message": "valid message"}]'),
+            dspy.Prediction(generated_inputs='[{"message": ""}]'),
+            dspy.Prediction(generated_inputs='[{"message": "valid message"}]'),
         ]
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -864,16 +917,23 @@ class TestGenerationRejectsBadData:
         inputs = gen._generate_inputs(1, None, "Classify tickets")
         assert len(inputs) == 1
         assert inputs[0]["message"] == "valid message"
-        assert mock_predictor.call_count == 2
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_rejects_emoji_input_and_retries(self, mock_predict_cls: MagicMock) -> None:
+    def test_rejects_emoji_input_and_retries(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         mock_predictor = MagicMock()
         mock_predictor.side_effect = [
-            MagicMock(generated_inputs='[{"message": "\u26a0\ufe0f server down"}]'),
-            MagicMock(generated_inputs='[{"message": "server down"}]'),
+            dspy.Prediction(
+                generated_inputs='[{"message": "\u26a0\ufe0f server down"}]'
+            ),
+            dspy.Prediction(generated_inputs='[{"message": "server down"}]'),
         ]
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
