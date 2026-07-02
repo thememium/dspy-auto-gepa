@@ -352,14 +352,20 @@ class TestAutoDataGeneration:
         assert len(inputs) == 1
         assert inputs[0]["message"] == "recovered"
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_outputs_mocked(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_outputs_mocked(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         """_generate_outputs returns correct output fields from mocked LLM."""
         mock_predictor = MagicMock()
-        mock_predictor.return_value = MagicMock(
+        mock_predictor.return_value = dspy.Prediction(
             generated_output='{"urgency": "high", "sentiment": "negative"}'
         )
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -368,7 +374,7 @@ class TestAutoDataGeneration:
             config=_make_autodata_config(),
         )
 
-        outputs = gen._generate_outputs(
+        outputs, _ = gen._generate_outputs(
             [{"message": "server is down"}],
             "Classify tickets",
         )
@@ -377,15 +383,23 @@ class TestAutoDataGeneration:
         assert outputs[0]["urgency"] == "high"
         assert outputs[0]["sentiment"] == "negative"
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
-    def test_generate_outputs_json_retry(self, mock_predict_cls: MagicMock) -> None:
+    def test_generate_outputs_json_retry(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
         """Output generation retries on invalid JSON."""
         mock_predictor = MagicMock()
         mock_predictor.side_effect = [
-            MagicMock(generated_output="bad json"),
-            MagicMock(generated_output='{"urgency": "low", "sentiment": "neutral"}'),
+            dspy.Prediction(generated_output="bad json"),
+            dspy.Prediction(
+                generated_output='{"urgency": "low", "sentiment": "neutral"}'
+            ),
         ]
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -394,7 +408,7 @@ class TestAutoDataGeneration:
             config=_make_autodata_config(n=1),
         )
 
-        outputs = gen._generate_outputs(
+        outputs, _ = gen._generate_outputs(
             [{"message": "hello"}],
             "Classify tickets",
         )
@@ -543,7 +557,7 @@ class TestAutoDataGeneration:
             config=_make_autodata_config(max_retries=2),
         )
 
-        outputs = gen._generate_outputs(
+        outputs, _ = gen._generate_outputs(
             [{"message": "test"}],
             "Classify tickets",
         )
@@ -946,9 +960,10 @@ class TestGenerationRejectsBadData:
         assert len(inputs) == 1
         assert "\u26a0" not in inputs[0]["message"]
 
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_rejects_bad_enum_output_and_retries(
-        self, mock_predict_cls: MagicMock
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
     ) -> None:
         from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
 
@@ -958,16 +973,19 @@ class TestGenerationRejectsBadData:
             nonlocal call_count
             call_count += 1
             if call_count <= 1:
-                return MagicMock(
+                return dspy.Prediction(
                     generated_output='{"urgency": "critical", "sentiment": "negative"}'
                 )
-            return MagicMock(
+            return dspy.Prediction(
                 generated_output='{"urgency": "high", "sentiment": "negative"}'
             )
 
         mock_predictor = MagicMock()
         mock_predictor.side_effect = predict_side_effect
         mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
 
         gen = AutoData(
             module=DummyModule(),
@@ -996,7 +1014,7 @@ class TestGenerationRejectsBadData:
             output_fields=["urgency", "sentiment"],
         )
 
-        outputs = gen._generate_outputs(
+        outputs, _ = gen._generate_outputs(
             [{"message": "server down"}],
             "Classify tickets",
         )
