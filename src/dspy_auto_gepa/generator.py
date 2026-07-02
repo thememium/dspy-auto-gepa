@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import json
 import os
 import random
@@ -857,10 +858,49 @@ class AutoData:
         seed_examples: Any | None = None,
         force: bool = False,
         output_path: str | Path | None = None,
+        *,
+        seed: int | None = None,
+        max_retries: int | None = None,
+        num_threads: int | None = None,
+        chunk_size: int | None = None,
+        diversity_threshold: float | None = None,
+        judge_enabled: bool | None = None,
+        validators_enabled: bool | None = None,
+        diversity_enabled: bool | None = None,
+        rejection_sampling_enabled: bool | None = None,
+        data_lm: dspy.LM | None = None,
+        judge_lm: dspy.LM | None = None,
+        balance_outputs: bool | None = None,
+        balance_tolerance: float | None = None,
+        oversample_factor: float | None = None,
     ) -> GenerationResult:
-        n = n or self.config.n
+        overrides = {
+            k: v
+            for k, v in {
+                "n": n,
+                "seed": seed,
+                "max_retries": max_retries,
+                "num_threads": num_threads,
+                "chunk_size": chunk_size,
+                "diversity_threshold": diversity_threshold,
+                "judge_enabled": judge_enabled,
+                "validators_enabled": validators_enabled,
+                "diversity_enabled": diversity_enabled,
+                "rejection_sampling_enabled": rejection_sampling_enabled,
+                "data_lm": data_lm,
+                "judge_lm": judge_lm,
+                "balance_outputs": balance_outputs,
+                "balance_tolerance": balance_tolerance,
+                "oversample_factor": oversample_factor,
+            }.items()
+            if v is not None
+        }
+        config = dataclasses.replace(self.config, **overrides)
+        n = config.n
+        self.config = config
+
         start_time = time.time()
-        random.seed(self.config.seed)
+        random.seed(config.seed)
 
         resolved_seeds = self._resolve_seeds(seed_examples)
 
