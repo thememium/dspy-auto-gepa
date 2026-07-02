@@ -1,12 +1,15 @@
+import ast
 import json
 import os
 import random
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 import dspy
 import pandas as pd
+from pydantic import create_model
 from tqdm import tqdm
 
 from .config import AutoDataConfig
@@ -25,6 +28,90 @@ from .quality import (
     sanitize_string,
 )
 from .runner import GenerationResult
+
+
+def _extract_json(text: str) -> str:
+    """Extract JSON from text that may be wrapped in markdown code blocks.
+
+    LLMs frequently wrap JSON output in ```json ... ``` fences.  This strips
+    those wrappers so ``json.loads()`` succeeds.  Falls back to scanning for
+    the outermost ``{``…``}`` or ``[``…``]`` pair, and finally tries
+    ``ast.literal_eval`` for Python dict/list literals.
+    """
+    text = text.strip()
+    if not text:
+        return text
+
+    try:
+        json.loads(text)
+        return text
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        candidate = match.group(1).strip()
+        try:
+            json.loads(candidate)
+            return candidate
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    for open_ch, close_ch in [("{", "}"), ("[", "]")]:
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end > start:
+            candidate = text[start : end + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    try:
+        parsed = ast.literal_eval(text)
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(parsed, default=str)
+    except (ValueError, SyntaxError):
+        pass
+
+    return text
+
+
+_TYPE_MAP: dict[str, type] = {
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+}
+
+
+def _build_output_model(
+    metadata: SignatureMetadata,
+    output_fields: list[str],
+    name: str = "GeneratedOutput",
+) -> type:
+    """Dynamically create a Pydantic model from signature output field metadata.
+
+    Maps each output field's python_type to a model field.  Fields with
+    ``allowed_values`` are annotated as ``Literal`` types so DSPy can emit
+    constrained JSON schemas for the LLM.
+    """
+    field_defs: dict[str, Any] = {}
+    for fname in output_fields:
+        if fname == "reasoning":
+            continue
+        meta = metadata.get(fname)
+        ftype: type = str
+        if meta and meta.python_type and isinstance(meta.python_type, type):
+            ftype = meta.python_type
+        if meta and meta.allowed_values:
+            from typing import Literal
+
+            ftype = Literal[tuple(meta.allowed_values)]  # type: ignore[valid-type]
+        default = ...  # required
+        field_defs[fname] = (ftype, default)
+    return create_model(name, **field_defs)
 
 
 class StreamingDatasetWriter:
@@ -95,6 +182,13 @@ class StreamingDatasetWriter:
     def close(self) -> None:
         self.flush()
 
+    def truncate(self) -> None:
+        if self._path.exists():
+            self._path.unlink()
+        self._rows_written = 0
+        self._all_rows = []
+        self._header_written = False
+
     def row_count(self) -> int:
         return self._rows_written
 
@@ -121,6 +215,8 @@ def _validate_and_sanitize_row(
     row: dict[str, Any],
     field_names: list[str],
     sig_metadata: SignatureMetadata | None = None,
+    *,
+    include_enum: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate and sanitize a generated row against field metadata.
 
@@ -141,13 +237,14 @@ def _validate_and_sanitize_row(
             cleaned[name] = val if val is not None else ""
             continue
 
-        meta = sig_metadata.get(name) if sig_metadata else None
-        if meta and meta.allowed_values and isinstance(val, str):
-            allowed_lower = [a.lower() for a in meta.allowed_values]
-            if val.strip().lower() not in allowed_lower:
-                errors.append(
-                    f"Field '{name}' value '{val}' not in allowed: {meta.allowed_values}"
-                )
+        if include_enum:
+            meta = sig_metadata.get(name) if sig_metadata else None
+            if meta and meta.allowed_values and isinstance(val, str):
+                allowed_lower = [a.lower() for a in meta.allowed_values]
+                if val.strip().lower() not in allowed_lower:
+                    errors.append(
+                        f"Field '{name}' value '{val}' not in allowed: {meta.allowed_values}"
+                    )
 
         cleaned[name] = val
 
@@ -157,6 +254,8 @@ def _validate_and_sanitize_row(
 def _build_validator(
     field_names: list[str],
     sig_metadata: SignatureMetadata | None = None,
+    *,
+    include_enum: bool = True,
 ) -> Validator:
     """Build a Validator with non-empty + no-emoji + enum checks for *field_names*."""
     fns: list[Any] = [
@@ -164,7 +263,7 @@ def _build_validator(
         no_emoji_validator(*field_names),
     ]
 
-    if sig_metadata:
+    if include_enum and sig_metadata:
         for name in field_names:
             meta = sig_metadata.get(name)
             if meta and meta.allowed_values:
@@ -245,6 +344,34 @@ class _OutputGenerationSignature(dspy.Signature):
             "Values must be one of the allowed values if specified."
         )
     )
+
+
+def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
+    """Build a DSPy Signature with strongly-typed batch output.
+
+    The returned signature has ``generated_outputs: list[output_model]`` so DSPy
+    emits a JSON Schema for the LLM rather than a free-form string.
+    """
+
+    class _BatchOutputSignature(dspy.Signature):
+        """Generate correct output values for multiple inputs at once.
+
+        Return one output object per input, in the SAME ORDER as the inputs
+        array.  Each object must match the schema exactly.
+        """
+
+        task_description: str = dspy.InputField(desc="Description of the task")
+        inputs_json: str = dspy.InputField(
+            desc="JSON array of input objects to generate outputs for"
+        )
+        n_to_generate: int = dspy.InputField(
+            desc="Number of output objects to generate (must match inputs_json length)"
+        )
+        generated_outputs: list[output_model] = dspy.OutputField(
+            desc="List of output objects, one per input, in the same order."
+        )
+
+    return _BatchOutputSignature
 
 
 class AutoData:
@@ -396,7 +523,7 @@ class AutoData:
                             covered_themes=themes_str,
                             n_to_generate=batch_size,
                         )
-                    parsed = json.loads(result.generated_inputs)
+                    parsed = json.loads(_extract_json(result.generated_inputs))
                     if not isinstance(parsed, list):
                         parsed = [parsed]
                     return [r for r in parsed if isinstance(r, dict)]
@@ -410,8 +537,14 @@ class AutoData:
             max_errors=self.config.num_threads * 3,
         )
 
+        max_total_attempts = max(max_retries * 5, n)
+        consecutive_failures = 0
+
         with dspy.settings.context(lm=self.data_lm):
             while len(all_inputs) < n:
+                if consecutive_failures >= max_total_attempts:
+                    break
+
                 chunk_batches = min(
                     self.config.chunk_size,
                     (n - len(all_inputs) + 9) // 10,
@@ -449,7 +582,9 @@ class AutoData:
                     for item in generated:
                         if isinstance(item, dspy.Prediction):
                             try:
-                                parsed = json.loads(item.generated_inputs)
+                                parsed = json.loads(
+                                    _extract_json(item.generated_inputs)
+                                )
                                 if not isinstance(parsed, list):
                                     parsed = [parsed]
                             except (json.JSONDecodeError, ValueError, TypeError):
@@ -484,6 +619,7 @@ class AutoData:
                                     covered_values[f].add(val.strip().lower())
 
                             accepted_this_chunk += 1
+                            consecutive_failures = 0
                             if progress is not None:
                                 progress.update(1)
                             if len(all_inputs) >= n:
@@ -493,29 +629,67 @@ class AutoData:
                     if len(all_inputs) >= n:
                         break
 
+                if accepted_this_chunk == 0:
+                    consecutive_failures += 1
+
         return all_inputs[:n]
 
-    def _process_output_result(
+    def _generate_outputs(
         self,
-        inp: dict[str, Any],
-        result: Any,
-        metadata: SignatureMetadata,
-        validator: Validator,
-        judge: LLMJudge | None,
+        inputs: list[dict[str, Any]],
         description: str,
-    ) -> tuple[dict[str, Any], float | None] | None:
-        if isinstance(result, Exception):
+        writer: StreamingDatasetWriter | None = None,
+        progress: tqdm | None = None,
+    ) -> tuple[list[dict[str, Any] | None], list[float] | None]:
+        metadata = self._ensure_metadata()
+        output_model = _build_output_model(metadata, self.output_fields)
+        batch_sig = _build_batch_output_signature(output_model)
+        batch_predictor = dspy.Predict(batch_sig)
+        single_predictor = dspy.Predict(_OutputGenerationSignature)
+        output_spec = self._field_spec_json(self.output_fields, metadata)
+        validator = _build_validator(self.output_fields, metadata, include_enum=False)
+        max_retries = self.config.max_retries
+        batch_size = min(10, self.config.chunk_size * 2)
+
+        judge = None
+        if self.config.judge_enabled:
+            judge_lm = self.config.judge_lm or self.data_lm
+            judge = LLMJudge(lm=judge_lm)
+
+        output_map: dict[int, tuple[dict[str, Any], float | None]] = {}
+        written_indices: set[int] = set()
+        pending_indices = list(range(len(inputs)))
+
+        def _to_dict(raw: Any) -> dict[str, Any] | None:
+            if isinstance(raw, dict):
+                return raw
+            if hasattr(raw, "model_dump"):
+                result = raw.model_dump()
+                if isinstance(result, dict):
+                    return result
+            if hasattr(raw, "dict"):
+                result = raw.dict()
+                if isinstance(result, dict):
+                    return result
             return None
 
-        items = result if isinstance(result, list) else [result]
-        for item in items:
-            if not isinstance(item, dspy.Prediction):
-                continue
-            try:
-                parsed = json.loads(item.generated_output)
-                if not isinstance(parsed, dict):
-                    continue
-
+        def _validate_and_accept(
+            inp: dict[str, Any], raw_output: Any, idx: int
+        ) -> bool:
+            if isinstance(raw_output, Exception):
+                return False
+            items = raw_output if isinstance(raw_output, list) else [raw_output]
+            for item in items:
+                parsed = _to_dict(item)
+                if parsed is None:
+                    if not isinstance(item, dspy.Prediction):
+                        continue
+                    try:
+                        parsed = json.loads(_extract_json(item.generated_output))
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        continue
+                    if not isinstance(parsed, dict):
+                        continue
                 clean_output = {}
                 for k in self.output_fields:
                     if k == "reasoning":
@@ -524,117 +698,94 @@ class AutoData:
                     if isinstance(val, str):
                         val = sanitize_string(val)
                     clean_output[k] = val if val is not None else ""
-
                 clean_output, val_errors = _validate_and_sanitize_row(
-                    clean_output, self.output_fields, metadata
+                    clean_output, self.output_fields, metadata, include_enum=False
                 )
                 if val_errors:
                     continue
-
                 val_result = validator.validate(clean_output)
                 if not val_result.is_valid:
                     continue
-
                 score = None
                 if judge is not None:
                     full_row = {**inp, **clean_output}
-                    judge_result = judge.score(full_row, task_description=description)
-                    score = judge_result.score
-
-                return clean_output, score
-
-            except (json.JSONDecodeError, ValueError, TypeError):
-                continue
-
-        return None
-
-    def _generate_outputs(
-        self,
-        inputs: list[dict[str, Any]],
-        description: str,
-        writer: StreamingDatasetWriter | None = None,
-        progress: tqdm | None = None,
-    ) -> tuple[list[dict[str, Any]], list[float] | None]:
-        predictor = dspy.Predict(_OutputGenerationSignature)
-        metadata = self._ensure_metadata()
-        output_spec = self._field_spec_json(self.output_fields, metadata)
-        validator = _build_validator(self.output_fields, metadata)
-        max_retries = self.config.max_retries
-
-        judge = None
-        if self.config.judge_enabled:
-            judge_lm = self.config.judge_lm or self.data_lm
-            judge = LLMJudge(lm=judge_lm)
-
-        parallel = dspy.Parallel(
-            num_threads=self.config.num_threads,
-            return_failed_examples=True,
-            max_errors=self.config.num_threads * 3,
-        )
-
-        all_outputs: list[dict[str, Any]] = []
-        all_scores: list[float] = [] if judge is not None else []
-        output_map: dict[int, tuple[dict[str, Any], float | None]] = {}
-
-        pending_inputs = list(enumerate(inputs))
-        chunk_size = self.config.chunk_size * 10
+                    score = judge.score(full_row, task_description=description).score
+                output_map[idx] = (clean_output, score)
+                if idx not in written_indices:
+                    if writer is not None:
+                        writer.write_row({**inp, **clean_output})
+                    written_indices.add(idx)
+                return True
+            return False
 
         with dspy.settings.context(lm=self.data_lm):
-            for attempt in range(max_retries):
-                if not pending_inputs:
+            for attempt in range(max_retries * 3):
+                if not pending_indices:
                     break
 
-                tasks = []
-                pending_indices = []
-                for idx, inp in pending_inputs:
-                    example = dspy.Example(
+                batch_indices = pending_indices[:batch_size]
+                batch_inputs = [inputs[i] for i in batch_indices]
+                inputs_json = json.dumps(batch_inputs, default=str)
+
+                try:
+                    result = batch_predictor(
                         task_description=description,
-                        input_data=json.dumps(inp, default=str),
-                        output_field_spec=output_spec,
-                    ).with_inputs("task_description", "input_data", "output_field_spec")
-                    tasks.append((predictor, example))
-                    pending_indices.append(idx)
+                        inputs_json=inputs_json,
+                        n_to_generate=len(batch_indices),
+                    )
+                    raw_outputs = result.generated_outputs
+                    if not isinstance(raw_outputs, list):
+                        raw_outputs = [raw_outputs]
+                except Exception as exc:
+                    tqdm.write(
+                        f"  [warn] batch output generation failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    raw_outputs = []
 
-                next_pending = []
-                for chunk_start in range(0, len(tasks), chunk_size):
-                    chunk_tasks = tasks[chunk_start : chunk_start + chunk_size]
-                    chunk_indices = pending_indices[
-                        chunk_start : chunk_start + chunk_size
-                    ]
-                    exec_results = parallel(chunk_tasks)
+                still_pending = []
+                for i, idx in enumerate(batch_indices):
+                    inp = inputs[idx]
+                    if i < len(raw_outputs):
+                        if _validate_and_accept(inp, raw_outputs[i], idx):
+                            continue
+                    still_pending.append(idx)
 
-                    for idx, inp_idx in enumerate(chunk_indices):
-                        inp = inputs[inp_idx]
-                        result = (
-                            exec_results[idx]
-                            if idx < len(exec_results)
-                            else Exception("No result")
+                for idx in still_pending:
+                    inp = inputs[idx]
+                    try:
+                        single_result = single_predictor(
+                            task_description=description,
+                            input_data=json.dumps(inp, default=str),
+                            output_field_spec=output_spec,
                         )
-                        processed = self._process_output_result(
-                            inp, result, metadata, validator, judge, description
+                        _validate_and_accept(inp, single_result, idx)
+                    except Exception as exc:
+                        tqdm.write(
+                            f"  [warn] single output generation failed for "
+                            f"row {idx}: {type(exc).__name__}: {exc}"
                         )
-                        if processed is not None:
-                            output_map[inp_idx] = processed
-                        else:
-                            next_pending.append((inp_idx, inp))
 
-                pending_inputs = next_pending
+                accepted = (
+                    len(batch_indices)
+                    - len(still_pending)
+                    + sum(1 for idx in still_pending if idx in output_map)
+                )
+                if progress is not None:
+                    progress.update(accepted)
 
+                pending_indices = [i for i in pending_indices if i not in output_map]
+
+        all_outputs: list[dict[str, Any] | None] = []
+        all_scores: list[float] = []
         for idx in range(len(inputs)):
             if idx in output_map:
                 output, score = output_map[idx]
                 all_outputs.append(output)
                 if score is not None:
                     all_scores.append(score)
-                if writer is not None:
-                    writer.write_row({**inputs[idx], **output})
             else:
-                fallback = {k: "" for k in self.output_fields if k != "reasoning"}
-                all_outputs.append(fallback)
-                if writer is not None:
-                    writer.write_row({**inputs[idx], **fallback})
-            if progress is not None:
-                progress.update(1)
+                all_outputs.append(None)
 
         return all_outputs, all_scores if judge is not None else None
 
@@ -687,17 +838,21 @@ class AutoData:
 
         writer = StreamingDatasetWriter(output_path)
 
+        if force:
+            writer.truncate()
+
         if not force and writer.row_count() > 0:
             existing_rows = writer.read_rows()
-            elapsed = time.time() - start_time
-            return GenerationResult(
-                rows=existing_rows,
-                n_requested=n,
-                n_produced=len(existing_rows),
-                n_failed=0,
-                seed_used=self.config.seed,
-                generation_time_seconds=elapsed,
-            )
+            if len(existing_rows) >= n:
+                elapsed = time.time() - start_time
+                return GenerationResult(
+                    rows=existing_rows[:n],
+                    n_requested=n,
+                    n_produced=len(existing_rows[:n]),
+                    n_failed=0,
+                    seed_used=self.config.seed,
+                    generation_time_seconds=elapsed,
+                )
 
         description = (
             self.description
@@ -721,18 +876,20 @@ class AutoData:
 
         complete_rows = []
         for inp, out in zip(inputs, outputs):
-            complete_rows.append({**inp, **out})
+            if out is not None:
+                complete_rows.append({**inp, **out})
 
+        n_written = writer.row_count()
         elapsed = time.time() - start_time
         tqdm.write(
-            f"Generated {len(complete_rows)}/{n} rows in {elapsed:.1f}s "
-            f"({len(complete_rows) / elapsed:.1f} rows/s)"
+            f"Generated {n_written}/{n} rows in {elapsed:.1f}s "
+            f"({n_written / elapsed:.1f} rows/s)"
         )
         return GenerationResult(
             rows=complete_rows,
             n_requested=n,
-            n_produced=len(complete_rows),
-            n_failed=n - len(complete_rows),
+            n_produced=n_written,
+            n_failed=n - n_written,
             seed_used=self.config.seed,
             generation_time_seconds=elapsed,
             quality_scores=quality_scores,
