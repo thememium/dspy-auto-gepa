@@ -47,6 +47,7 @@ class AutoDataConfig:
     seed: int = 42
     max_retries: int = 3
     num_threads: int = 16
+    chunk_size: int = 5
     diversity_threshold: float = 0.3
     judge_enabled: bool = True
     validators_enabled: bool = True
@@ -60,5 +61,7 @@ class AutoDataConfig:
             raise ValueError("n must be positive")
         if self.max_retries <= 0:
             raise ValueError("max_retries must be positive")
+        if self.chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         if not (0.0 <= self.diversity_threshold <= 1.0):
             raise ValueError("diversity_threshold must be between 0.0 and 1.0")
