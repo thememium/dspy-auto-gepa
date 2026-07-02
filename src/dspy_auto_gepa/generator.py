@@ -495,15 +495,70 @@ class AutoData:
 
         return all_inputs[:n]
 
+    def _process_output_result(
+        self,
+        inp: dict[str, Any],
+        result: Any,
+        metadata: SignatureMetadata,
+        validator: Validator,
+        judge: LLMJudge | None,
+        description: str,
+    ) -> tuple[dict[str, Any], float | None] | None:
+        if isinstance(result, Exception):
+            return None
+
+        items = result if isinstance(result, list) else [result]
+        for item in items:
+            if not isinstance(item, dspy.Prediction):
+                continue
+            try:
+                parsed = json.loads(item.generated_output)
+                if not isinstance(parsed, dict):
+                    continue
+
+                clean_output = {}
+                for k in self.output_fields:
+                    if k == "reasoning":
+                        continue
+                    val = parsed.get(k)
+                    if isinstance(val, str):
+                        val = sanitize_string(val)
+                    clean_output[k] = val if val is not None else ""
+
+                clean_output, val_errors = _validate_and_sanitize_row(
+                    clean_output, self.output_fields, metadata
+                )
+                if val_errors:
+                    continue
+
+                val_result = validator.validate(clean_output)
+                if not val_result.is_valid:
+                    continue
+
+                score = None
+                if judge is not None:
+                    full_row = {**inp, **clean_output}
+                    judge_result = judge.score(full_row, task_description=description)
+                    score = judge_result.score
+
+                return clean_output, score
+
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+
+        return None
+
     def _generate_outputs(
         self,
         inputs: list[dict[str, Any]],
         description: str,
         writer: StreamingDatasetWriter | None = None,
         progress: tqdm | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[float] | None]:
         predictor = dspy.Predict(_OutputGenerationSignature)
-        all_outputs: list[dict[str, Any]] = []
+        metadata = self._ensure_metadata()
+        output_spec = self._field_spec_json(self.output_fields, metadata)
+        validator = _build_validator(self.output_fields, metadata)
         max_retries = self.config.max_retries
 
         judge = None
@@ -511,81 +566,77 @@ class AutoData:
             judge_lm = self.config.judge_lm or self.data_lm
             judge = LLMJudge(lm=judge_lm)
 
-        metadata = self._ensure_metadata()
-        output_spec = self._field_spec_json(self.output_fields, metadata)
-        validator = _build_validator(self.output_fields, metadata)
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
 
-        for inp in inputs:
-            row_output: dict[str, Any] | None = None
-            last_errors: list[str] = []
+        all_outputs: list[dict[str, Any]] = []
+        all_scores: list[float] = [] if judge is not None else []
+        output_map: dict[int, tuple[dict[str, Any], float | None]] = {}
 
+        pending_inputs = list(enumerate(inputs))
+        chunk_size = self.config.chunk_size * 10
+
+        with dspy.settings.context(lm=self.data_lm):
             for attempt in range(max_retries):
-                try:
-                    with dspy.settings.context(lm=self.data_lm):
-                        result = predictor(
-                            task_description=description,
-                            input_data=json.dumps(inp, default=str),
-                            output_field_spec=output_spec,
-                        )
-
-                    parsed = json.loads(result.generated_output)
-                    if not isinstance(parsed, dict):
-                        last_errors.append("LLM did not return a JSON object")
-                        continue
-
-                    clean_output = {}
-                    for k in self.output_fields:
-                        if k == "reasoning":
-                            continue
-                        val = parsed.get(k)
-                        if isinstance(val, str):
-                            val = sanitize_string(val)
-                        clean_output[k] = val if val is not None else ""
-
-                    clean_output, val_errors = _validate_and_sanitize_row(
-                        clean_output, self.output_fields, metadata
-                    )
-                    if val_errors:
-                        last_errors = val_errors
-                        continue
-
-                    val_result = validator.validate(clean_output)
-                    if not val_result.is_valid:
-                        last_errors = val_result.failures
-                        continue
-
-                    if judge is not None:
-                        full_row = {**inp, **clean_output}
-                        judge_result = judge.score(
-                            full_row, task_description=description
-                        )
-                        if judge_result.score < 0.5 and attempt < max_retries - 1:
-                            last_errors.append(
-                                f"Judge score {judge_result.score:.2f} below threshold"
-                            )
-                            continue
-
-                    row_output = clean_output
+                if not pending_inputs:
                     break
 
-                except (json.JSONDecodeError, ValueError, TypeError) as exc:
-                    last_errors.append(str(exc))
-                    continue
+                tasks = []
+                pending_indices = []
+                for idx, inp in pending_inputs:
+                    example = dspy.Example(
+                        task_description=description,
+                        input_data=json.dumps(inp, default=str),
+                        output_field_spec=output_spec,
+                    ).with_inputs("task_description", "input_data", "output_field_spec")
+                    tasks.append((predictor, example))
+                    pending_indices.append(idx)
 
-            if row_output is not None:
-                all_outputs.append(row_output)
+                next_pending = []
+                for chunk_start in range(0, len(tasks), chunk_size):
+                    chunk_tasks = tasks[chunk_start : chunk_start + chunk_size]
+                    chunk_indices = pending_indices[
+                        chunk_start : chunk_start + chunk_size
+                    ]
+                    exec_results = parallel(chunk_tasks)
+
+                    for idx, inp_idx in enumerate(chunk_indices):
+                        inp = inputs[inp_idx]
+                        result = (
+                            exec_results[idx]
+                            if idx < len(exec_results)
+                            else Exception("No result")
+                        )
+                        processed = self._process_output_result(
+                            inp, result, metadata, validator, judge, description
+                        )
+                        if processed is not None:
+                            output_map[inp_idx] = processed
+                        else:
+                            next_pending.append((inp_idx, inp))
+
+                pending_inputs = next_pending
+
+        for idx in range(len(inputs)):
+            if idx in output_map:
+                output, score = output_map[idx]
+                all_outputs.append(output)
+                if score is not None:
+                    all_scores.append(score)
                 if writer is not None:
-                    writer.write_row({**inp, **row_output})
+                    writer.write_row({**inputs[idx], **output})
             else:
                 fallback = {k: "" for k in self.output_fields if k != "reasoning"}
                 all_outputs.append(fallback)
                 if writer is not None:
-                    writer.write_row({**inp, **fallback})
-
+                    writer.write_row({**inputs[idx], **fallback})
             if progress is not None:
                 progress.update(1)
 
-        return all_outputs
+        return all_outputs, all_scores if judge is not None else None
 
     @classmethod
     def from_csv(
@@ -663,7 +714,7 @@ class AutoData:
         output_bar = tqdm(
             total=len(inputs), desc="Generating outputs", unit="row", leave=True
         )
-        outputs = self._generate_outputs(
+        outputs, quality_scores = self._generate_outputs(
             inputs, description, writer=writer, progress=output_bar
         )
         output_bar.close()
@@ -671,14 +722,6 @@ class AutoData:
         complete_rows = []
         for inp, out in zip(inputs, outputs):
             complete_rows.append({**inp, **out})
-
-        quality_scores = None
-        if self.config.judge_enabled:
-            judge = LLMJudge(lm=self.config.judge_lm or self.data_lm)
-            quality_scores = []
-            for row in complete_rows:
-                qr = judge.score(row, task_description=description)
-                quality_scores.append(qr.score)
 
         elapsed = time.time() - start_time
         tqdm.write(
