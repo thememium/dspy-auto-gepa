@@ -42,7 +42,7 @@ dev = [
   "pytest-cov>=7.1.0",
   "ruff>=0.15.13",
   "ty>=0.0.38",
-  "usechange>=0.1.28",
+  "usechange>=0.1.43",
 ]
 
 [tool.pytest.ini_options]

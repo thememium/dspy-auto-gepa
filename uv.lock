@@ -476,7 +476,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.13" },
     { name = "ty", specifier = ">=0.0.38" },
-    { name = "usechange", specifier = ">=0.1.28" },
+    { name = "usechange", specifier = ">=0.1.43" },
 ]
 
 [[package]]
@@ -2149,20 +2149,20 @@ wheels = [
 
 [[package]]
 name = "usechange"
-version = "0.1.28"
+version = "0.1.43"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "tomli" },
     { name = "usecli" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/27/73/0eeaebcfa88d3daf912388e6f7367bf8046498b4fcb2b9d03e117de6a64a/usechange-0.1.28.tar.gz", hash = "sha256:1023cb8d255d44a0b9fa42439a22d3bcf1a21ce636032f0c5af85252d5891d5b", size = 18283, upload-time = "2026-03-04T05:43:11.534Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/4a/e5d2e7e6f77624f859c40f3769a9b2418574358a0ccb8add16b8e8faa0df/usechange-0.1.43.tar.gz", hash = "sha256:e95417974ec800f08521fd211b72cb208617edef12f5ada560c2655dc87944bd", size = 18283, upload-time = "2026-06-13T18:31:32.774Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/f9/350163d9bb0245fa615c3ff8da032612415f87ab1bde044224a4141ba4d1/usechange-0.1.28-py3-none-any.whl", hash = "sha256:aa69367de549b043842527daba168e028698abfb691565c478858c85adc4b48d", size = 26507, upload-time = "2026-03-04T05:43:10.376Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ee/03a996abb9d53c1068b54b9d5ac713183425c490e19dedcb717e26ebb0e8/usechange-0.1.43-py3-none-any.whl", hash = "sha256:7d719016228244deffda73e2ca52301cf950470299dbe37406b7ff9490beafdc", size = 26492, upload-time = "2026-06-13T18:31:33.717Z" },
 ]
 
 [[package]]
 name = "usecli"
-version = "0.1.48"
+version = "0.1.71"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "case-converter" },
@@ -2175,9 +2175,9 @@ dependencies = [
     { name = "tomli" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/75/997f5ccdb9e167ee5eba4c752c3f0123ec491493a365cdf3f0c5330bb73e/usecli-0.1.48.tar.gz", hash = "sha256:6209e017162c5d208ecd07e073644f4bf80b50e7c1e3a10475d3167bbbb6d9e2", size = 51144, upload-time = "2026-03-04T05:41:34.649Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/95/55b8e6624a958b54c743cc82529ada072f3383de738d4a384fa16ced8d1e/usecli-0.1.71.tar.gz", hash = "sha256:189a25175254ae625252df16cb332db23dc88b4a331810f1bc35034ec8d916ca", size = 60226, upload-time = "2026-06-30T02:58:21.25Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/d6/6ed58420b7630ff4ad7d1ea14537ca11c5bb26b9e82b0307559a7f1154ff/usecli-0.1.48-py3-none-any.whl", hash = "sha256:a17bc92c4cac625863edc46627a1749a1e3fdebb1e89e355e0ee4c85c43f20f3", size = 77060, upload-time = "2026-03-04T05:41:35.843Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/74/ad1f0d139a6d6218a51b86d0a5df30fcc6646894694bbd119c8f3e2f54d5/usecli-0.1.71-py3-none-any.whl", hash = "sha256:41743fbe358486398a4e335f7e4b677a0dc088a998582c1d7147239e827bebde", size = 86223, upload-time = "2026-06-30T02:58:20.081Z" },
 ]
 
 [[package]]
