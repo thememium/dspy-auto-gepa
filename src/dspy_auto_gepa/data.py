@@ -1,9 +1,109 @@
 import json
 import random
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import dspy
+
+
+@dataclass
+class FieldMetadata:
+    name: str
+    python_type: type
+    description: str
+    is_input: bool
+    allowed_values: list[str] | None = None
+
+
+@dataclass
+class SignatureMetadata:
+    fields: list[FieldMetadata]
+    input_fields: list[str] = field(default_factory=list)
+    output_fields: list[str] = field(default_factory=list)
+
+    def get(self, name: str) -> FieldMetadata | None:
+        for f in self.fields:
+            if f.name == name:
+                return f
+        return None
+
+    def to_prompt_spec(self) -> str:
+        parts: list[str] = []
+        for f in self.fields:
+            entry: dict[str, Any] = {"type": f.python_type.__name__}
+            if f.description:
+                entry["desc"] = f.description
+            if f.allowed_values:
+                entry["allowed"] = f.allowed_values
+            parts.append(f'"{f.name}": {json.dumps(entry)}')
+        return "{" + ", ".join(parts) + "}"
+
+
+def _infer_allowed_values(
+    field_name: str,
+    seed_examples: list[dict[str, Any]] | None,
+    max_cardinality: int = 10,
+) -> list[str] | None:
+    if not seed_examples:
+        return None
+    distinct: set[str] = set()
+    for row in seed_examples:
+        val = row.get(field_name)
+        if isinstance(val, str) and val.strip():
+            distinct.add(val.strip().lower())
+    if 1 < len(distinct) <= max_cardinality:
+        return sorted(distinct)
+    return None
+
+
+def extract_signature_metadata(
+    sig: type[dspy.Signature],
+    seed_examples: list[dict[str, Any]] | None = None,
+) -> SignatureMetadata:
+    fields_meta: list[FieldMetadata] = []
+    input_names: list[str] = []
+    output_names: list[str] = []
+
+    raw_fields = getattr(sig, "fields", None)
+    if raw_fields is None:
+        return SignatureMetadata(fields=[])
+
+    for name, field_info in raw_fields.items():
+        json_extra = getattr(field_info, "json_schema_extra", {}) or {}
+        field_type_str = json_extra.get("__dspy_field_type")
+        is_input = field_type_str == "input" or getattr(field_info, "is_input", False)
+        is_output = field_type_str == "output" or getattr(
+            field_info, "is_output", False
+        )
+
+        if not is_input and not is_output:
+            continue
+
+        annotation = getattr(field_info, "annotation", str) or str
+        desc = getattr(field_info, "description", "") or ""
+
+        allowed = _infer_allowed_values(name, seed_examples)
+
+        meta = FieldMetadata(
+            name=name,
+            python_type=annotation if isinstance(annotation, type) else str,
+            description=desc,
+            is_input=is_input,
+            allowed_values=allowed,
+        )
+        fields_meta.append(meta)
+
+        if is_input:
+            input_names.append(name)
+        else:
+            output_names.append(name)
+
+    return SignatureMetadata(
+        fields=fields_meta,
+        input_fields=input_names,
+        output_fields=output_names,
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
