@@ -45,7 +45,7 @@ class AutoDataConfig:
 
     n: int = 100
     seed: int = 42
-    max_retries: int = 3
+    max_retries: int = 8
     num_threads: int = 16
     chunk_size: int = 5
     diversity_threshold: float = 0.3
