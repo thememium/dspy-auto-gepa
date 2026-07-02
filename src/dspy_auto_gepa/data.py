@@ -1,10 +1,64 @@
+import json
 import random
+from pathlib import Path
 from typing import Any
 
 import dspy
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _read_json_array(path: Path) -> list[dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "rows" in data:
+        data = data["rows"]
+    if not isinstance(data, list):
+        raise ValueError(
+            f"JSON file must contain an array of objects, got {type(data).__name__}"
+        )
+    return data
+
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    import pandas as pd
+
+    return pd.read_csv(path).to_dict(orient="records")
+
+
+def _read_parquet(path: Path) -> list[dict[str, Any]]:
+    import pandas as pd
+
+    return pd.read_parquet(path).to_dict(orient="records")
+
+
 def _to_dicts(obj: Any) -> list[dict[str, Any]]:
+    if isinstance(obj, (str, Path)):
+        path = Path(obj)
+        if not path.exists():
+            raise FileNotFoundError(f"Dataset file not found: {path}")
+        suffix = path.suffix.lower()
+        if suffix == ".jsonl":
+            return _read_jsonl(path)
+        if suffix == ".json":
+            return _read_json_array(path)
+        if suffix == ".csv":
+            return _read_csv(path)
+        if suffix in (".parquet", ".pq"):
+            return _read_parquet(path)
+        raise ValueError(
+            f"Unsupported file extension '{suffix}' for dataset file. "
+            "Use .jsonl, .json, .csv, .parquet, or .pq"
+        )
+
     if isinstance(obj, list):
         return obj
 
@@ -32,6 +86,7 @@ def _to_dicts(obj: Any) -> list[dict[str, Any]]:
     raise TypeError(
         f"Cannot convert {type(obj).__name__} to list of dicts. "
         "Expected: list[dict], pandas DataFrame, polars DataFrame/LazyFrame, "
+        "file path (str/Path to .jsonl, .json, .csv, .parquet), "
         "or any object with .to_dicts() or .to_pandas()."
     )
 
