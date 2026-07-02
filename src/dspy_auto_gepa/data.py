@@ -83,7 +83,7 @@ def extract_signature_metadata(
         annotation = getattr(field_info, "annotation", str) or str
         desc = getattr(field_info, "description", "") or ""
 
-        allowed = _infer_allowed_values(name, seed_examples)
+        allowed = _infer_allowed_values(name, seed_examples) if not is_input else None
 
         meta = FieldMetadata(
             name=name,
