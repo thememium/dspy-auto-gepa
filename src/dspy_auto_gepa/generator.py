@@ -9,8 +9,21 @@ import dspy
 import pandas as pd
 
 from .config import AutoDataConfig
-from .data import _to_dicts, infer_fields_from_module
-from .quality import DiversityChecker, LLMJudge
+from .data import (
+    SignatureMetadata,
+    _to_dicts,
+    extract_signature_metadata,
+    infer_fields_from_module,
+)
+from .quality import (
+    DiversityChecker,
+    LLMJudge,
+    Validator,
+    enum_validator,
+    no_emoji_validator,
+    non_empty_validator,
+    sanitize_string,
+)
 from .runner import GenerationResult
 
 
@@ -25,10 +38,9 @@ class StreamingDatasetWriter:
         self._path = Path(path)
         self._format = self._detect_format(self._path)
         self._rows_written = 0
-        self._all_rows: list[dict] = []  # For parquet (needs full rewrite)
-        self._header_written = False  # For CSV
+        self._all_rows: list[dict] = []
+        self._header_written = False
 
-        # On init, check for existing rows (resume support)
         if self._path.exists():
             existing = self.read_rows()
             self._rows_written = len(existing)
@@ -51,7 +63,6 @@ class StreamingDatasetWriter:
         )
 
     def write_row(self, row: dict[str, Any]) -> None:
-        """Append a single row to disk immediately."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         if self._format == "jsonl":
@@ -75,24 +86,19 @@ class StreamingDatasetWriter:
         self._rows_written += 1
 
     def write_rows(self, rows: list[dict[str, Any]]) -> None:
-        """Append multiple rows."""
         for row in rows:
             self.write_row(row)
 
     def flush(self) -> None:
-        """Ensure all data is on disk."""
-        pass  # Each write_row already flushes
+        pass
 
     def close(self) -> None:
-        """Finalize (no-op for streaming writers)."""
         self.flush()
 
     def row_count(self) -> int:
-        """Number of rows written so far."""
         return self._rows_written
 
     def read_rows(self) -> list[dict[str, Any]]:
-        """Read back all rows from disk (for resume support)."""
         if not self._path.exists():
             return []
 
@@ -111,17 +117,76 @@ class StreamingDatasetWriter:
         return []
 
 
+def _validate_and_sanitize_row(
+    row: dict[str, Any],
+    field_names: list[str],
+    sig_metadata: SignatureMetadata | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate and sanitize a generated row against field metadata.
+
+    Returns (cleaned_row, errors). The cleaned row has emoji stripped and
+    whitespace normalized.  Errors list is non-empty when validation fails.
+    """
+    errors: list[str] = []
+    cleaned: dict[str, Any] = {}
+
+    for name in field_names:
+        val = row.get(name)
+
+        if isinstance(val, str):
+            val = sanitize_string(val)
+
+        if val is None or (isinstance(val, str) and not val.strip()):
+            errors.append(f"Field '{name}' must not be empty")
+            cleaned[name] = val if val is not None else ""
+            continue
+
+        meta = sig_metadata.get(name) if sig_metadata else None
+        if meta and meta.allowed_values and isinstance(val, str):
+            allowed_lower = [a.lower() for a in meta.allowed_values]
+            if val.strip().lower() not in allowed_lower:
+                errors.append(
+                    f"Field '{name}' value '{val}' not in allowed: {meta.allowed_values}"
+                )
+
+        cleaned[name] = val
+
+    return cleaned, errors
+
+
+def _build_validator(
+    field_names: list[str],
+    sig_metadata: SignatureMetadata | None = None,
+) -> Validator:
+    """Build a Validator with non-empty + no-emoji + enum checks for *field_names*."""
+    fns: list[Any] = [
+        non_empty_validator(*field_names),
+        no_emoji_validator(*field_names),
+    ]
+
+    if sig_metadata:
+        for name in field_names:
+            meta = sig_metadata.get(name)
+            if meta and meta.allowed_values:
+                fns.append(enum_validator(name, meta.allowed_values))
+
+    return Validator(fns)
+
+
 class _InputGenerationSignature(dspy.Signature):
     """Generate realistic input data for a task.
 
     Return a JSON array of input objects. Each object must have exactly the
-    specified input field names as keys. Values should be diverse, realistic,
-    and cover edge cases.
+    specified input field names as keys. Values must match the type and
+    constraint spec. Do NOT include emoji or special Unicode characters.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
-    input_field_names: str = dspy.InputField(
-        desc="Comma-separated list of input field names"
+    input_field_spec: str = dspy.InputField(
+        desc=(
+            "JSON spec of input fields with types and constraints. "
+            'Example: {"message": {"type": "str", "desc": "The support ticket text"}}'
+        )
     )
     existing_inputs_json: str = dspy.InputField(
         desc="JSON array of already-generated inputs for diversity reference",
@@ -129,7 +194,10 @@ class _InputGenerationSignature(dspy.Signature):
     )
     n_to_generate: int = dspy.InputField(desc="Number of input objects to generate")
     generated_inputs: str = dspy.OutputField(
-        desc="JSON array of input objects, each with exactly the specified field names"
+        desc=(
+            "JSON array of input objects. Each object must have exactly the "
+            "specified field names. No emoji. No empty strings."
+        )
     )
 
 
@@ -137,16 +205,23 @@ class _OutputGenerationSignature(dspy.Signature):
     """Generate correct output values for a given input.
 
     Return a JSON object with exactly the specified output field names as keys.
-    Values should be realistic and correct for the given task.
+    Values MUST match the allowed values listed in the field spec.
+    Do NOT include emoji or special Unicode characters.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
     input_data: str = dspy.InputField(desc="JSON object of the input row")
-    output_field_names: str = dspy.InputField(
-        desc="Comma-separated list of output field names"
+    output_field_spec: str = dspy.InputField(
+        desc=(
+            "JSON spec of output fields with types, allowed values, and descriptions. "
+            'Example: {"urgency": {"type": "str", "allowed": ["low", "medium", "high"]}}'
+        )
     )
     generated_output: str = dspy.OutputField(
-        desc="JSON object with exactly the specified output field names"
+        desc=(
+            "JSON object with exactly the specified output field names. "
+            "Values must be one of the allowed values if specified."
+        )
     )
 
 
@@ -166,19 +241,13 @@ class AutoData:
         self.schema = schema
         self._name = name
 
-        # data_lm: first-class param, falls back to dspy.settings.lm
         self.data_lm = data_lm or self.config.data_lm or dspy.settings.lm
 
-        # Infer fields from module signature
         self.input_fields, self.output_fields = infer_fields_from_module(module)
-
-        # Strip reasoning from output fields (ChainOfThought injects it)
         self.output_fields = [f for f in self.output_fields if f != "reasoning"]
 
-        # Validate description
         sig = getattr(module, "signature", None)
         if sig is None:
-            # Fallback for wrappers like ChainOfThought
             predictors = list(getattr(module, "named_predictors", lambda: [])())
             if predictors:
                 sig = getattr(predictors[0][1], "signature", None)
@@ -190,14 +259,49 @@ class AutoData:
                 "Pass description='...' to describe the task for data generation."
             )
 
-        # Parse schema if provided
         self._schema_fields: dict[str, str] = {}
         if self.schema is not None:
             for name, field_info in self.schema.model_fields.items():
                 self._schema_fields[name] = str(field_info.annotation)
 
-        # Seed examples storage
         self.seed_examples: list[dict[str, Any]] | None = None
+        self._sig_metadata: SignatureMetadata | None = None
+
+    def _ensure_metadata(
+        self, seed_examples: list[dict[str, Any]] | None = None
+    ) -> SignatureMetadata:
+        if self._sig_metadata is not None:
+            return self._sig_metadata
+
+        sig = getattr(self.module, "signature", None)
+        if sig is None:
+            predictors = list(getattr(self.module, "named_predictors", lambda: [])())
+            if predictors:
+                sig = getattr(predictors[0][1], "signature", None)
+
+        if sig is not None:
+            self._sig_metadata = extract_signature_metadata(
+                sig, seed_examples=seed_examples or self.seed_examples
+            )
+        else:
+            self._sig_metadata = SignatureMetadata(fields=[])
+
+        return self._sig_metadata
+
+    def _field_spec_json(
+        self, field_names: list[str], metadata: SignatureMetadata
+    ) -> str:
+        spec: dict[str, Any] = {}
+        for name in field_names:
+            meta = metadata.get(name)
+            entry: dict[str, Any] = {"type": "str"}
+            if meta:
+                if meta.description:
+                    entry["desc"] = meta.description
+                if meta.allowed_values:
+                    entry["allowed"] = meta.allowed_values
+            spec[name] = entry
+        return json.dumps(spec)
 
     def _generate_inputs(
         self,
@@ -205,7 +309,6 @@ class AutoData:
         seed_examples: list[dict[str, Any]] | None,
         description: str,
     ) -> list[dict[str, Any]]:
-        """Pass 1: Generate n diverse input rows using the LLM."""
         predictor = dspy.Predict(_InputGenerationSignature)
         all_inputs: list[dict[str, Any]] = []
         batch_size = min(10, n)
@@ -215,6 +318,9 @@ class AutoData:
             if self.config.diversity_enabled
             else None
         )
+        metadata = self._ensure_metadata(seed_examples)
+        input_spec = self._field_spec_json(self.input_fields, metadata)
+        validator = _build_validator(self.input_fields, metadata)
 
         while len(all_inputs) < n:
             remaining = n - len(all_inputs)
@@ -230,7 +336,7 @@ class AutoData:
                     with dspy.settings.context(lm=self.data_lm):
                         result = predictor(
                             task_description=description,
-                            input_field_names=", ".join(self.input_fields),
+                            input_field_spec=input_spec,
                             existing_inputs_json=existing_json,
                             n_to_generate=current_batch,
                         )
@@ -240,10 +346,21 @@ class AutoData:
                         parsed = [parsed]
 
                     validated = []
+                    validation_errors: list[str] = []
                     for row in parsed:
-                        if isinstance(row, dict):
-                            clean_row = {k: row.get(k, "") for k in self.input_fields}
-                            validated.append(clean_row)
+                        if not isinstance(row, dict):
+                            continue
+                        clean_row, errs = _validate_and_sanitize_row(
+                            row, self.input_fields, metadata
+                        )
+                        if errs:
+                            validation_errors.extend(errs)
+                            continue
+                        val_result = validator.validate(clean_row)
+                        if not val_result.is_valid:
+                            validation_errors.extend(val_result.failures)
+                            continue
+                        validated.append(clean_row)
 
                     if not validated:
                         continue
@@ -272,57 +389,82 @@ class AutoData:
         inputs: list[dict[str, Any]],
         description: str,
     ) -> list[dict[str, Any]]:
-        """Pass 2: Generate output values for each input row using the LLM."""
         predictor = dspy.Predict(_OutputGenerationSignature)
         all_outputs: list[dict[str, Any]] = []
         max_retries = self.config.max_retries
 
-        # Setup quality pipeline components
         judge = None
         if self.config.judge_enabled:
             judge_lm = self.config.judge_lm or self.data_lm
             judge = LLMJudge(lm=judge_lm)
 
+        metadata = self._ensure_metadata()
+        output_spec = self._field_spec_json(self.output_fields, metadata)
+        validator = _build_validator(self.output_fields, metadata)
+
         for inp in inputs:
+            row_output: dict[str, Any] | None = None
+            last_errors: list[str] = []
+
             for attempt in range(max_retries):
                 try:
                     with dspy.settings.context(lm=self.data_lm):
                         result = predictor(
                             task_description=description,
                             input_data=json.dumps(inp, default=str),
-                            output_field_names=", ".join(self.output_fields),
+                            output_field_spec=output_spec,
                         )
 
                     parsed = json.loads(result.generated_output)
                     if not isinstance(parsed, dict):
+                        last_errors.append("LLM did not return a JSON object")
                         continue
 
-                    # Keep only output fields, strip reasoning
                     clean_output = {}
                     for k in self.output_fields:
                         if k == "reasoning":
                             continue
-                        clean_output[k] = parsed.get(k, "")
+                        val = parsed.get(k)
+                        if isinstance(val, str):
+                            val = sanitize_string(val)
+                        clean_output[k] = val if val is not None else ""
 
-                    # Quality check via judge
+                    clean_output, val_errors = _validate_and_sanitize_row(
+                        clean_output, self.output_fields, metadata
+                    )
+                    if val_errors:
+                        last_errors = val_errors
+                        continue
+
+                    val_result = validator.validate(clean_output)
+                    if not val_result.is_valid:
+                        last_errors = val_result.failures
+                        continue
+
                     if judge is not None:
                         full_row = {**inp, **clean_output}
                         judge_result = judge.score(
                             full_row, task_description=description
                         )
                         if judge_result.score < 0.5 and attempt < max_retries - 1:
-                            continue  # Retry with better output
+                            last_errors.append(
+                                f"Judge score {judge_result.score:.2f} below threshold"
+                            )
+                            continue
 
-                    all_outputs.append(clean_output)
+                    row_output = clean_output
                     break
 
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    if attempt == max_retries - 1:
-                        # Last attempt failed — use empty output
-                        all_outputs.append(
-                            {k: "" for k in self.output_fields if k != "reasoning"}
-                        )
+                except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                    last_errors.append(str(exc))
                     continue
+
+            if row_output is not None:
+                all_outputs.append(row_output)
+            else:
+                all_outputs.append(
+                    {k: "" for k in self.output_fields if k != "reasoning"}
+                )
 
         return all_outputs
 
@@ -333,7 +475,6 @@ class AutoData:
         module: dspy.Module,
         **kwargs: Any,
     ) -> "AutoData":
-        """Create AutoData with seed examples from a CSV file."""
         df = pd.read_csv(path)
         seed = df.to_dict(orient="records")
         gen = cls(module=module, **kwargs)
@@ -347,7 +488,6 @@ class AutoData:
         module: dspy.Module,
         **kwargs: Any,
     ) -> "AutoData":
-        """Create AutoData with seed examples from a JSON file."""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict) and "rows" in data:
@@ -364,36 +504,19 @@ class AutoData:
         force: bool = False,
         output_path: str | Path | None = None,
     ) -> GenerationResult:
-        """Generate synthetic training data.
-
-        Args:
-            n: Number of rows to generate. Defaults to config.n.
-            seed_examples: Seed data — list[dict], DataFrame, file path
-                (.jsonl, .json, .csv, .parquet), or any object _to_dicts supports.
-            force: If False, resume from partial save. If True, regenerate.
-            output_path: Output file path. Format auto-detected from extension.
-                Defaults to .auto_gepa/generated/rows.jsonl.
-
-        Returns:
-            GenerationResult with generated rows.
-        """
         n = n or self.config.n
         start_time = time.time()
         random.seed(self.config.seed)
 
-        # Resolve seed examples
         resolved_seeds = self._resolve_seeds(seed_examples)
 
-        # Determine output path
         if output_path is None:
             name = self._name or "unnamed"
             output_path = Path(".auto_gepa") / name / "generated" / "rows.jsonl"
         output_path = Path(output_path)
 
-        # Setup streaming writer
         writer = StreamingDatasetWriter(output_path)
 
-        # Resume support
         if not force and writer.row_count() > 0:
             existing_rows = writer.read_rows()
             elapsed = time.time() - start_time
@@ -411,8 +534,9 @@ class AutoData:
             or getattr(getattr(self.module, "signature", None), "__doc__", "")
             or ""
         )
-        inputs = self._generate_inputs(n, resolved_seeds, description)
 
+        self._ensure_metadata(resolved_seeds)
+        inputs = self._generate_inputs(n, resolved_seeds, description)
         outputs = self._generate_outputs(inputs, description)
 
         complete_rows = []
