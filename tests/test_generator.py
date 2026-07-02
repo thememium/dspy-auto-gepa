@@ -13,7 +13,11 @@ import pandas as pd
 import pytest
 
 from dspy_auto_gepa.config import AutoDataConfig
-from dspy_auto_gepa.generator import AutoData, StreamingDatasetWriter
+from dspy_auto_gepa.generator import (
+    AutoData,
+    StreamingDatasetWriter,
+    _compute_output_combos,
+)
 from dspy_auto_gepa.runner import GenerationResult
 
 # ---------------------------------------------------------------------------
@@ -999,3 +1003,333 @@ class TestGenerationRejectsBadData:
         assert len(outputs) == 1
         assert outputs[0] is not None
         assert outputs[0]["urgency"] == "critical"
+
+
+# ---------------------------------------------------------------------------
+# Output balancing tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeOutputCombos:
+    """Tests for _compute_output_combos."""
+
+    def test_single_categorical_field(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "medium", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+        combos = _compute_output_combos(["urgency"], metadata)
+        assert combos is not None
+        assert len(combos) == 3
+        values = [c["urgency"] for c in combos]
+        assert set(values) == {"low", "medium", "high"}
+
+    def test_two_categorical_fields(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+                FieldMetadata(
+                    name="sentiment",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["positive", "negative"],
+                ),
+            ],
+            output_fields=["urgency", "sentiment"],
+        )
+        combos = _compute_output_combos(["urgency", "sentiment"], metadata)
+        assert combos is not None
+        assert len(combos) == 4
+        combo_tuples = {tuple(sorted(c.items())) for c in combos}
+        assert len(combo_tuples) == 4
+
+    def test_no_categorical_fields_returns_none(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="summary",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=None,
+                ),
+            ],
+            output_fields=["summary"],
+        )
+        combos = _compute_output_combos(["summary"], metadata)
+        assert combos is None
+
+    def test_mixed_categorical_and_free(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+                FieldMetadata(
+                    name="summary",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=None,
+                ),
+            ],
+            output_fields=["urgency", "summary"],
+        )
+        combos = _compute_output_combos(["urgency", "summary"], metadata)
+        assert combos is not None
+        assert len(combos) == 2
+        for c in combos:
+            assert "urgency" in c
+            assert "summary" not in c
+
+    def test_skips_reasoning_field(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="reasoning",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["a", "b"],
+                ),
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+            ],
+            output_fields=["reasoning", "urgency"],
+        )
+        combos = _compute_output_combos(["reasoning", "urgency"], metadata)
+        assert combos is not None
+        assert len(combos) == 2
+        for c in combos:
+            assert "reasoning" not in c
+
+
+class TestSubsampleBalanced:
+    """Tests for _subsample_balanced greedy selection."""
+
+    def test_picks_underrepresented_values_first(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=4),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+
+        rows = [{"message": f"msg{i}", "urgency": "low"} for i in range(5)] + [
+            {"message": "msg5", "urgency": "high"},
+        ]
+        scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.95]
+
+        result_rows, result_scores = gen._subsample_balanced(rows, 4, scores)
+
+        assert len(result_rows) == 4
+        low_count = sum(1 for r in result_rows if r["urgency"] == "low")
+        high_count = sum(1 for r in result_rows if r["urgency"] == "high")
+        assert low_count == 3
+        assert high_count == 1
+        assert len(result_scores) == 4
+
+    def test_balances_two_fields(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=6),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+                FieldMetadata(
+                    name="sentiment",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["positive", "negative"],
+                ),
+            ],
+            output_fields=["urgency", "sentiment"],
+        )
+
+        rows = [
+            {"message": "m0", "urgency": "high", "sentiment": "negative"},
+            {"message": "m1", "urgency": "high", "sentiment": "negative"},
+            {"message": "m2", "urgency": "high", "sentiment": "negative"},
+            {"message": "m3", "urgency": "high", "sentiment": "negative"},
+            {"message": "m4", "urgency": "low", "sentiment": "positive"},
+            {"message": "m5", "urgency": "low", "sentiment": "positive"},
+        ]
+        scores = [0.5] * 6
+
+        result_rows, _ = gen._subsample_balanced(rows, 4, scores)
+
+        assert len(result_rows) == 4
+        urg_low = sum(1 for r in result_rows if r["urgency"] == "low")
+        urg_high = sum(1 for r in result_rows if r["urgency"] == "high")
+        sent_pos = sum(1 for r in result_rows if r["sentiment"] == "positive")
+        sent_neg = sum(1 for r in result_rows if r["sentiment"] == "negative")
+        assert urg_low >= 1
+        assert urg_high >= 1
+        assert sent_pos >= 1
+        assert sent_neg >= 1
+
+    def test_returns_all_when_pool_smaller_than_n(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=10),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+
+        rows = [
+            {"message": "m0", "urgency": "low"},
+            {"message": "m1", "urgency": "high"},
+        ]
+        scores = [0.5, 0.6]
+
+        result_rows, result_scores = gen._subsample_balanced(rows, 10, scores)
+
+        assert len(result_rows) == 2
+        assert len(result_scores) == 2
+
+    def test_no_categorical_fields_returns_first_n(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=3),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="summary",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=None,
+                ),
+            ],
+            output_fields=["summary"],
+        )
+
+        rows = [{"message": f"m{i}", "summary": f"sum{i}"} for i in range(5)]
+        scores = [0.1 * i for i in range(5)]
+
+        result_rows, result_scores = gen._subsample_balanced(rows, 3, scores)
+
+        assert len(result_rows) == 3
+        assert len(result_scores) == 3
+
+    def test_preserves_scores_alignment(self) -> None:
+        from dspy_auto_gepa.data import FieldMetadata, SignatureMetadata
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=4),
+        )
+
+        gen._sig_metadata = SignatureMetadata(
+            fields=[
+                FieldMetadata(
+                    name="urgency",
+                    python_type=str,
+                    description="",
+                    is_input=False,
+                    allowed_values=["low", "high"],
+                ),
+            ],
+            output_fields=["urgency"],
+        )
+
+        rows = [
+            {"message": "m0", "urgency": "low"},
+            {"message": "m1", "urgency": "high"},
+            {"message": "m2", "urgency": "low"},
+            {"message": "m3", "urgency": "high"},
+        ]
+        scores = [0.9, 0.8, 0.7, 0.6]
+
+        result_rows, result_scores = gen._subsample_balanced(rows, 4, scores)
+
+        assert len(result_rows) == 4
+        assert len(result_scores) == 4
+        for row, sc in zip(result_rows, result_scores):
+            idx = int(row["message"][1])
+            assert sc == scores[idx]
