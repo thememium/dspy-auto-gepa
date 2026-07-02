@@ -129,6 +129,20 @@ If your row columns don't match the module's signature fields, AutoGEPA will rai
 ValueError: Row columns do not match module signature fields. Missing from rows: ['message', 'sentiment', 'urgency']. Extra in rows: ['msg_text', 'sent', 'urg']. Pass input_fields/output_fields to map row columns to signature fields, or ensure row columns match exactly.
 ```
 
+### Loading datasets from files
+
+Pass a file path directly as `rows` — format is auto-detected from the extension:
+
+```python
+auto = AutoGEPA(
+    rows="data/train.jsonl",   # .jsonl, .json, .csv, .parquet all work
+    module=program,
+    name="TicketSignature",
+    metric_lm=large_lm,
+    reflection_lm=large_lm,
+)
+```
+
 ### With dict field mappings
 
 When your row columns have different names than your module's signature fields:
@@ -193,7 +207,7 @@ auto.promote(
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `rows` | `list[dict] \| DataFrame \| None` | Training data. Accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, or any object with `.to_dicts()` or `.to_pandas()` |
+| `rows` | `list[dict] \| DataFrame \| str \| Path \| None` | Training data. Accepts `list[dict]`, pandas DataFrame, polars DataFrame/LazyFrame, file path (`str`/`Path` to `.jsonl`, `.json`, `.csv`, `.parquet`), or any object with `.to_dicts()` or `.to_pandas()` |
 | `module` | `dspy.Module \| None` | The DSPy module to optimize |
 | `name` | `str \| None` | Task name for artifact subdirectory |
 | `input_fields` | `list[str] \| dict[str, str] \| None` | Input field names. List for exact match, dict for `{row_column: signature_field}` mapping. Inferred from signature if omitted |
