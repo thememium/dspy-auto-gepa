@@ -263,8 +263,111 @@ def test_to_dicts_list_of_dicts():
 
 
 def test_to_dicts_unsupported():
-    with pytest.raises(TypeError):
-        _to_dicts("not a dataframe")
+    with pytest.raises((TypeError, ValueError)):
+        _to_dicts(42)
+
+
+def test_to_dicts_unsupported_extension(tmp_path: Path):
+    bad_file = tmp_path / "data.txt"
+    bad_file.write_text("hello")
+    with pytest.raises(ValueError, match="Unsupported file extension"):
+        _to_dicts(bad_file)
+
+
+def test_to_dicts_missing_file():
+    with pytest.raises(FileNotFoundError):
+        _to_dicts("/nonexistent/data.jsonl")
+
+
+def test_to_dicts_jsonl(tmp_path: Path):
+    import json
+
+    jsonl_file = tmp_path / "data.jsonl"
+    rows = [
+        {"message": "hello", "label": "greeting"},
+        {"message": "bye", "label": "farewell"},
+    ]
+    with open(jsonl_file, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+    result = _to_dicts(jsonl_file)
+    assert result == rows
+
+
+def test_to_dicts_jsonl_str_path(tmp_path: Path):
+    import json
+
+    jsonl_file = tmp_path / "data.jsonl"
+    rows = [{"x": 1, "y": 2}]
+    with open(jsonl_file, "w") as f:
+        f.write(json.dumps(rows[0]) + "\n")
+
+    result = _to_dicts(str(jsonl_file))
+    assert result == rows
+
+
+def test_to_dicts_json_array(tmp_path: Path):
+    import json
+
+    json_file = tmp_path / "data.json"
+    rows = [
+        {"message": "hello", "label": "greeting"},
+        {"message": "bye", "label": "farewell"},
+    ]
+    with open(json_file, "w") as f:
+        json.dump(rows, f)
+
+    result = _to_dicts(json_file)
+    assert result == rows
+
+
+def test_to_dicts_json_with_rows_key(tmp_path: Path):
+    import json
+
+    json_file = tmp_path / "data.json"
+    rows = [{"a": 1}, {"a": 2}]
+    with open(json_file, "w") as f:
+        json.dump({"rows": rows}, f)
+
+    result = _to_dicts(json_file)
+    assert result == rows
+
+
+def test_to_dicts_csv(tmp_path: Path):
+    csv_file = tmp_path / "data.csv"
+    csv_file.write_text("message,label\nhello,greeting\nbye,farewell\n")
+
+    result = _to_dicts(csv_file)
+    assert result == [
+        {"message": "hello", "label": "greeting"},
+        {"message": "bye", "label": "farewell"},
+    ]
+
+
+def test_to_dicts_parquet(tmp_path: Path):
+    import pandas as pd
+
+    df = pd.DataFrame({"message": ["hello"], "label": ["greeting"]})
+    pq_file = tmp_path / "data.parquet"
+    df.to_parquet(pq_file, index=False)
+
+    result = _to_dicts(pq_file)
+    assert result == [{"message": "hello", "label": "greeting"}]
+
+
+def test_to_dicts_path_object(tmp_path: Path):
+    import json
+
+    jsonl_file = tmp_path / "data.jsonl"
+    rows = [{"x": 1}]
+    with open(jsonl_file, "w") as f:
+        f.write(json.dumps(rows[0]) + "\n")
+
+    from pathlib import Path
+
+    result = _to_dicts(Path(jsonl_file))
+    assert result == rows
 
 
 def test_build_metric_generates_file(tmp_path: Path) -> None:

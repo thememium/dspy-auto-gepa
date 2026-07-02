@@ -588,5 +588,7 @@ class TestAutoDataGeneration:
             data_lm=MagicMock(),
             description="test",
         )
-        with pytest.raises(ValueError, match="Unsupported seed file format"):
-            gen._resolve_seeds(str(tmp_path / "seeds.xml"))
+        bad_file = tmp_path / "seeds.xml"
+        bad_file.write_text("<data/>")
+        with pytest.raises(ValueError, match="Unsupported file extension"):
+            gen._resolve_seeds(str(bad_file))
