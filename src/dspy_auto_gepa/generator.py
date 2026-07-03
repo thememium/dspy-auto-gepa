@@ -350,6 +350,10 @@ class _OutputGenerationSignature(dspy.Signature):
     Return a JSON object with exactly the specified output field names as keys.
     Values MUST match the allowed values listed in the field spec.
     Do NOT include emoji or special Unicode characters.
+
+    IMPORTANT: Vary your output values across calls. If allowed values are
+    provided, use ALL of them with roughly equal frequency over many calls.
+    Do not default to the same values repeatedly.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
@@ -363,7 +367,9 @@ class _OutputGenerationSignature(dspy.Signature):
     generated_output: str = dspy.OutputField(
         desc=(
             "JSON object with exactly the specified output field names. "
-            "Values must be one of the allowed values if specified."
+            "Values must be one of the allowed values if specified. "
+            "IMPORTANT: Use varied output values — do not repeat the same values "
+            "across different inputs."
         )
     )
 
@@ -458,6 +464,10 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
 
         Return one output object per input, in the SAME ORDER as the inputs
         array.  Each object must match the schema exactly.
+
+        IMPORTANT: Vary output values across the batch. If allowed values are
+        specified, distribute them roughly evenly across all items. Do NOT
+        assign the same values to every item.
         """
 
         task_description: str = dspy.InputField(desc="Description of the task")
@@ -1158,7 +1168,9 @@ class AutoData:
                         else:
                             continue
 
+                        # Collect validated rows for batch scoring
                         rows_to_write: list[dict[str, Any]] = []
+                        validated_rows: list[dict[str, Any]] = []
                         for row in parsed:
                             if not isinstance(row, dict):
                                 continue
@@ -1172,12 +1184,18 @@ class AutoData:
                                 continue
                             if _is_duplicate(clean_row):
                                 continue
+                            validated_rows.append(clean_row)
 
-                            score = None
-                            if judge is not None:
-                                score = judge.score(
-                                    clean_row, task_description=description
-                                ).score
+                        # Batch score all validated rows in one LLM call
+                        if judge is not None and validated_rows:
+                            scores = judge.batch_score(
+                                validated_rows, task_description=description
+                            )
+                        else:
+                            scores = None
+
+                        for i, clean_row in enumerate(validated_rows):
+                            score = scores[i].score if scores is not None else None
 
                             all_rows.append(clean_row)
                             all_scores.append(score or 0.0)
@@ -1419,13 +1437,20 @@ class AutoData:
             best_score = -1.0
             best_quality = float("-inf")
             for i, (row, row_quality) in enumerate(pool):
+                # Compute a normalized deficit score: for each categorical
+                # field, how under-represented is this row's value?  We sum
+                # the fractional deficits (deficit / target) so fields with
+                # different target counts contribute equally.
                 score = 0.0
                 for fname in categorical_fields:
                     val = row.get(fname)
                     if isinstance(val, str):
                         val_lower = val.strip().lower()
-                        deficit = target_per_value[fname] - counts[fname][val_lower]
-                        score += max(0.0, deficit)
+                        current = counts[fname][val_lower]
+                        target = target_per_value[fname]
+                        if target > 0:
+                            deficit = target - current
+                            score += max(0.0, deficit) / target
                 if score > best_score or (
                     score == best_score and row_quality > best_quality
                 ):
