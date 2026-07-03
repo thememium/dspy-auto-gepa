@@ -1,5 +1,4 @@
 import ast
-import dataclasses
 import json
 import os
 import random
@@ -351,7 +350,7 @@ def _build_signature_generation_signature() -> type[dspy.Signature]:
     """Build a DSPy Signature that generates complete rows using the user's signature.
 
     The returned signature has:
-    - Inputs: task_description, recent_rows_json, covered_themes, n_to_generate
+    - Inputs: task_description, field_spec, diversity_categories, recent_rows_json, covered_themes, n_to_generate
     - Outputs: generated_rows (JSON array of complete rows)
 
     This is used in "signature" generation mode where inputs and outputs
@@ -365,10 +364,12 @@ def _build_signature_generation_signature() -> type[dspy.Signature]:
         both input and output fields.  The values must be coherent: outputs
         must logically follow from the inputs.
 
-        CRITICAL: Every generated row MUST be completely unique. Do NOT repeat,
-        closely paraphrase, or slightly modify any existing row. Each new row
-        must cover a different scenario, use different wording, and represent a
-        distinct real-world case.
+        DIVERSITY IS CRITICAL:
+        - Cover DIFFERENT topics, domains, and scenarios in each row
+        - Do NOT paraphrase or rephrase existing examples
+        - Each row should explore a completely different subject area
+        - Vary the difficulty, complexity, and type of content
+        - Use different vocabulary, writing styles, and perspectives
 
         Return a JSON array of row objects. Each object must have exactly the
         specified field names as keys. Do NOT include emoji or special
@@ -382,14 +383,22 @@ def _build_signature_generation_signature() -> type[dspy.Signature]:
             desc=(
                 "JSON spec of ALL fields (inputs and outputs) with types, "
                 "descriptions, and allowed values. "
-                'Example: {"message": {"type": "str", "desc": "The support ticket text"}, '
-                '"urgency": {"type": "str", "allowed": ["low", "medium", "high"]}}'
+                'Example: {"question": {"type": "str", "desc": "A question to answer"}, '
+                '"answer": {"type": "str", "desc": "The correct answer"}}'
             )
+        )
+        diversity_categories: str = dspy.InputField(
+            desc=(
+                "Comma-separated list of categories/topics to cover for diversity. "
+                "Each generated row should come from a DIFFERENT category. "
+                "Example: 'science, history, geography, math, literature, technology, sports, music'"
+            ),
+            default="",
         )
         recent_rows_json: str = dspy.InputField(
             desc=(
                 "JSON array of the most recent rows generated. Use these to ensure "
-                "your new rows are DIFFERENT in topic, wording, and scenario."
+                "your new rows cover DIFFERENT topics and scenarios."
             ),
             default="[]",
         )
@@ -404,9 +413,8 @@ def _build_signature_generation_signature() -> type[dspy.Signature]:
         generated_rows: str = dspy.OutputField(
             desc=(
                 "JSON array of complete row objects. Each object must have exactly the "
-                "specified field names. No emoji. No empty strings. Every entry "
-                "MUST be completely different from all existing rows in both "
-                "structure and content. Outputs must logically follow from inputs."
+                "specified field names. No emoji. No empty strings. CRITICAL: Each row "
+                "MUST cover a DIFFERENT topic/scenario. Do NOT paraphrase existing rows."
             )
         )
 
@@ -990,12 +998,14 @@ class AutoData:
                     example = dspy.Example(
                         task_description=description,
                         field_spec=field_spec,
+                        diversity_categories=self.config.diversity_categories,
                         recent_rows_json=recent_json,
                         covered_themes=themes_str,
                         n_to_generate=batch_size,
                     ).with_inputs(
                         "task_description",
                         "field_spec",
+                        "diversity_categories",
                         "recent_rows_json",
                         "covered_themes",
                         "n_to_generate",
@@ -1103,60 +1113,25 @@ class AutoData:
 
     def generate(
         self,
-        n: int | None = None,
-        seed_examples: Any | None = None,
-        force: bool = False,
-        output_path: str | Path | None = None,
         *,
-        seed: int | None = None,
-        max_retries: int | None = None,
-        num_threads: int | None = None,
-        chunk_size: int | None = None,
-        diversity_threshold: float | None = None,
-        judge_enabled: bool | None = None,
-        validators_enabled: bool | None = None,
-        diversity_enabled: bool | None = None,
-        rejection_sampling_enabled: bool | None = None,
-        data_lm: dspy.LM | None = None,
-        judge_lm: dspy.LM | None = None,
-        balance_outputs: bool | None = None,
-        balance_tolerance: float | None = None,
-        oversample_factor: float | None = None,
+        force: bool | None = None,
+        output_path: str | Path | None = None,
     ) -> GenerationResult:
-        overrides = {
-            k: v
-            for k, v in {
-                "n": n,
-                "seed": seed,
-                "max_retries": max_retries,
-                "num_threads": num_threads,
-                "chunk_size": chunk_size,
-                "diversity_threshold": diversity_threshold,
-                "judge_enabled": judge_enabled,
-                "validators_enabled": validators_enabled,
-                "diversity_enabled": diversity_enabled,
-                "rejection_sampling_enabled": rejection_sampling_enabled,
-                "data_lm": data_lm,
-                "judge_lm": judge_lm,
-                "balance_outputs": balance_outputs,
-                "balance_tolerance": balance_tolerance,
-                "oversample_factor": oversample_factor,
-            }.items()
-            if v is not None
-        }
-        config = dataclasses.replace(self.config, **overrides)
-        n = config.n
-        self.config = config
-
+        n = self.config.n
         start_time = time.time()
-        random.seed(config.seed)
+        random.seed(self.config.seed)
 
-        resolved_seeds = self._resolve_seeds(seed_examples)
+        resolved_seeds = self._resolve_seeds(self.config.seed_examples)
 
+        if output_path is None:
+            output_path = self.config.output_path
         if output_path is None:
             name = self._name or "unnamed"
             output_path = Path(".auto_gepa") / name / "generated" / "rows.jsonl"
         output_path = Path(output_path)
+
+        if force is None:
+            force = self.config.force
 
         writer = StreamingDatasetWriter(output_path)
 
@@ -1187,7 +1162,11 @@ class AutoData:
         if self.config.generation_mode == "signature":
             bar = tqdm(total=n, desc="Generating rows", unit="row", leave=True)
             complete_rows, quality_scores = self._generate_signature_mode(
-                n, resolved_seeds, description, writer=writer, progress=bar
+                n,
+                resolved_seeds,
+                description,
+                writer=writer,
+                progress=bar,
             )
             bar.close()
             row_scores = quality_scores or []
