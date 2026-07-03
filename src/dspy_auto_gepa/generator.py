@@ -796,6 +796,9 @@ class AutoData:
         output_spec = self._field_spec_json(self.output_fields, metadata)
         validator = _build_validator(self.output_fields, metadata, include_enum=False)
         max_retries = self.config.max_retries
+        max_inflight = self.config.max_inflight_requests
+        if max_inflight is None:
+            max_inflight = self.config.num_threads
         batch_size = min(24, max(10, self.config.chunk_size * 2))
 
         judge = None
@@ -881,7 +884,7 @@ class AutoData:
 
                 # Split pending into batches for parallel execution
                 chunk_batches = min(
-                    self._parallel_request_budget(),
+                    max_inflight,
                     (len(pending_indices) + batch_size - 1) // batch_size,
                 )
 
