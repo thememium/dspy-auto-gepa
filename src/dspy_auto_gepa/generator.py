@@ -873,117 +873,124 @@ class AutoData:
             max_errors=self.config.num_threads * 3,
         )
 
-        for combo in output_combos:
-            if len(all_rows) >= n:
-                break
+        # Process all combos in parallel: one batch per combo per round
+        with dspy.settings.context(lm=self.data_lm):
+            combo_states: list[dict[str, Any]] = []
+            for combo in output_combos:
+                combo_needed = min(per_combo, n - len(all_rows))
+                combo_states.append({
+                    "combo": combo,
+                    "target_json": json.dumps(combo, default=str),
+                    "needed": combo_needed,
+                    "rows": [],
+                    "recent_window": [],
+                    "covered_values": {f: set() for f in self.input_fields},
+                    "consecutive_failures": 0,
+                })
 
-            target_json = json.dumps(combo, default=str)
-            combo_needed = min(per_combo, n - len(all_rows))
-            combo_rows: list[dict[str, Any]] = []
-            recent_window: list[dict[str, Any]] = []
-            covered_values: dict[str, set[str]] = {f: set() for f in self.input_fields}
-            consecutive_failures = 0
-            max_total_attempts = max(max_retries * 5, combo_needed)
+            predictor = dspy.Predict(_TargetedInputGenerationSignature)
+            max_total_attempts = max(max_retries * 5, per_combo)
 
-            with dspy.settings.context(lm=self.data_lm):
-                while len(combo_rows) < combo_needed:
-                    if consecutive_failures >= max_total_attempts:
-                        break
+            while any(s["needed"] > len(s["rows"]) for s in combo_states):
+                active = [s for s in combo_states if s["needed"] > len(s["rows"])]
+                if not active:
+                    break
 
-                    chunk_batches = min(
-                        self.config.num_threads,
-                        (combo_needed - len(combo_rows) + 19) // 20,
-                    )
-
-                    recent_json = json.dumps(recent_window[-20:], default=str)
-                    themes_str = ""
+                tasks = []
+                task_combo_indices: list[int] = []
+                for ci, state in enumerate(active):
+                    if state["consecutive_failures"] >= max_total_attempts:
+                        continue
+                    remaining = state["needed"] - len(state["rows"])
+                    batch_size = min(20, remaining)
+                    recent_json = json.dumps(state["recent_window"][-20:], default=str)
                     parts = []
-                    for f, vals in covered_values.items():
+                    for f, vals in state["covered_values"].items():
                         if vals:
                             parts.append(f"{f}: {', '.join(sorted(vals))}")
                     themes_str = "; ".join(parts)
 
-                    tasks = []
-                    for _ in range(chunk_batches):
-                        remaining = combo_needed - len(combo_rows)
-                        batch_size = min(20, remaining)
-                        example = dspy.Example(
-                            task_description=description,
-                            input_field_spec=input_spec,
-                            target_output=target_json,
-                            recent_inputs_json=recent_json,
-                            covered_themes=themes_str,
-                            n_to_generate=batch_size,
-                        ).with_inputs(
-                            "task_description",
-                            "input_field_spec",
-                            "target_output",
-                            "recent_inputs_json",
-                            "covered_themes",
-                            "n_to_generate",
-                        )
-                        tasks.append((predictor, example))
+                    example = dspy.Example(
+                        task_description=description,
+                        input_field_spec=input_spec,
+                        target_output=state["target_json"],
+                        recent_inputs_json=recent_json,
+                        covered_themes=themes_str,
+                        n_to_generate=batch_size,
+                    ).with_inputs(
+                        "task_description",
+                        "input_field_spec",
+                        "target_output",
+                        "recent_inputs_json",
+                        "covered_themes",
+                        "n_to_generate",
+                    )
+                    tasks.append((predictor, example))
+                    task_combo_indices.append(ci)
 
-                    exec_results = parallel(tasks)
-                    if isinstance(exec_results, tuple):
-                        exec_results = exec_results[0]
+                if not tasks:
+                    break
 
-                    accepted_this_chunk = 0
-                    for result in exec_results:
-                        if isinstance(result, Exception):
+                exec_results = parallel(tasks)
+                if isinstance(exec_results, tuple):
+                    exec_results = exec_results[0]
+
+                for ti, result in enumerate(exec_results):
+                    ci = task_combo_indices[ti]
+                    state = active[ci]
+                    if isinstance(result, Exception):
+                        state["consecutive_failures"] += 1
+                        continue
+
+                    generated = result if isinstance(result, list) else [result]
+                    accepted = 0
+                    for item in generated:
+                        if isinstance(item, dspy.Prediction):
+                            try:
+                                parsed = json.loads(
+                                    _extract_json(item.generated_inputs)
+                                )
+                                if not isinstance(parsed, list):
+                                    parsed = [parsed]
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                continue
+                        elif isinstance(item, dict):
+                            parsed = [item]
+                        else:
                             continue
-                        generated = result if isinstance(result, list) else [result]
-                        for item in generated:
-                            if isinstance(item, dspy.Prediction):
-                                try:
-                                    parsed = json.loads(
-                                        _extract_json(item.generated_inputs)
-                                    )
-                                    if not isinstance(parsed, list):
-                                        parsed = [parsed]
-                                except (json.JSONDecodeError, ValueError, TypeError):
-                                    continue
-                            elif isinstance(item, dict):
-                                parsed = [item]
-                            else:
+
+                        for row in parsed:
+                            if not isinstance(row, dict):
+                                continue
+                            clean_row, errs = _validate_and_sanitize_row(
+                                row, self.input_fields, metadata
+                            )
+                            if errs:
+                                continue
+                            val_result = validator.validate(clean_row)
+                            if not val_result.is_valid:
                                 continue
 
-                            for row in parsed:
-                                if not isinstance(row, dict):
-                                    continue
-                                clean_row, errs = _validate_and_sanitize_row(
-                                    row, self.input_fields, metadata
-                                )
-                                if errs:
-                                    continue
-                                val_result = validator.validate(clean_row)
-                                if not val_result.is_valid:
-                                    continue
-
-                                # Assign the target output to the row
-                                complete_row = {**clean_row, **combo}
-                                combo_rows.append(complete_row)
-                                recent_window.append(clean_row)
-                                for f in self.input_fields:
-                                    val = clean_row.get(f)
-                                    if isinstance(val, str) and val.strip():
-                                        covered_values[f].add(val.strip().lower())
-
-                                accepted_this_chunk += 1
-                                consecutive_failures = 0
-                                if progress is not None:
-                                    progress.update(1)
-                                if len(combo_rows) >= combo_needed:
-                                    break
-                            if len(combo_rows) >= combo_needed:
+                            complete_row = {**clean_row, **state["combo"]}
+                            state["rows"].append(complete_row)
+                            state["recent_window"].append(clean_row)
+                            for f in self.input_fields:
+                                val = clean_row.get(f)
+                                if isinstance(val, str) and val.strip():
+                                    state["covered_values"][f].add(val.strip().lower())
+                            accepted += 1
+                            if progress is not None:
+                                progress.update(1)
+                            if len(state["rows"]) >= state["needed"]:
                                 break
-                        if len(combo_rows) >= combo_needed:
-                            break
 
-                    if accepted_this_chunk == 0:
-                        consecutive_failures += 1
+                    if accepted == 0:
+                        state["consecutive_failures"] += 1
+                    else:
+                        state["consecutive_failures"] = 0
 
-            all_rows.extend(combo_rows)
+            for state in combo_states:
+                all_rows.extend(state["rows"])
 
         return all_rows[:n]
 
