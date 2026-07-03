@@ -817,6 +817,8 @@ class AutoData:
                     return result
             return None
 
+        rows_to_write: list[dict[str, Any]] = []
+
         def _validate_and_accept(
             inp: dict[str, Any], raw_output: Any, idx: int
         ) -> bool:
@@ -856,8 +858,7 @@ class AutoData:
                     score = judge.score(full_row, task_description=description).score
                 output_map[idx] = (clean_output, score)
                 if idx not in written_indices:
-                    if writer is not None:
-                        writer.write_row({**inp, **clean_output})
+                    rows_to_write.append({**inp, **clean_output})
                     written_indices.add(idx)
                 return True
             return False
@@ -887,6 +888,7 @@ class AutoData:
                     )
                     raw_outputs = []
 
+                rows_to_write = []
                 still_pending = []
                 for i, idx in enumerate(batch_indices):
                     inp = inputs[idx]
@@ -909,6 +911,9 @@ class AutoData:
                             f"  [warn] single output generation failed for "
                             f"row {idx}: {type(exc).__name__}: {exc}"
                         )
+
+                if writer is not None and rows_to_write:
+                    writer.write_rows(rows_to_write)
 
                 accepted = (
                     len(batch_indices)
