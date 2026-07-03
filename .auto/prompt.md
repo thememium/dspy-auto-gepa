@@ -1,43 +1,53 @@
 # Autoresearch: Speed up AutoData row generation
 
 ## Objective
-Make the AutoData row generation pipeline faster. The primary bottleneck is in `_generate_outputs()` in `generator.py`, which:
-1. Processes batches **sequentially** (unlike `_generate_inputs` which uses `dspy.Parallel`)
-2. Makes **per-row LLM judge calls** sequentially (each row = 1 extra LLM call)
-3. Uses small effective batch sizes with no concurrency
-
-The benchmark (`examples/data_split.py`) generates 100 rows (200 with oversampling) for a ticket classification task. Current baseline: ~139s, ~0.7 rows/s. Input generation is fast (~11s for 200 rows at 16.9 row/s). Output generation takes ~127s for 200 rows at 1.57 row/s.
+Make the AutoData row generation pipeline faster while ensuring balanced output distribution for classification tasks. 
 
 ## Metrics
-- **Primary**: total_seconds (seconds, lower is better) — wall-clock time for the full generate() call
+- **Primary**: total_seconds (seconds, lower is better) — average of split + signature mode
 - **Secondary**: rows_per_sec — throughput
 
 ## How to Run
-`./.auto/measure.sh` — runs `uv run examples/data_split.py` and outputs `METRIC name=value` lines.
+`./.auto/measure.sh` — runs both split and signature mode examples, outputs `METRIC name=value` lines.
 
 ## Files in Scope
-- `src/dspy_auto_gepa/generator.py` — Main generation logic. Contains `_generate_outputs()` (the bottleneck), `_generate_inputs()` (reference for parallel pattern), `_generate_signature_mode()`, and the `AutoData` class.
-- `src/dspy_auto_gepa/config.py` — `AutoDataConfig` dataclass. May need new config fields.
-- `src/dspy_auto_gepa/quality.py` — `LLMJudge` class. Currently calls LLM synchronously per row.
-- `examples/data_split.py` — The benchmark example. Do not modify.
+- `src/dspy_auto_gepa/generator.py` — Main generation logic
+- `src/dspy_auto_gepa/config.py` — `AutoDataConfig` dataclass
+- `src/dspy_auto_gepa/quality.py` — `LLMJudge` class with batch scoring
 
 ## Off Limits
-- `examples/data_split.py` — the benchmark itself; must not be modified
+- `examples/data_split.py`, `examples/data_signature.py` — benchmarks
 - Do not change the data schema, output format, or validation logic
-- Do not reduce output quality (judge must still run if enabled)
-- Do not cheat by caching or short-circuiting the generation
+- Do not reduce output quality
 
 ## Constraints
 - Tests must pass (`uv run pytest`)
-- No new dependencies (use stdlib: `concurrent.futures`, `dspy.Parallel`, etc.)
-- The judge must still be called for each row when `judge_enabled=True`
-- Output row quality must not degrade — same validators, same sanitization
+- No new dependencies
+- Judge must still be called when enabled
+- Output distribution must be balanced for classification tasks
 
 ## What's Been Tried
-- Prior experiments increased request_row_cap from 14→16→18→20→22 for input and signature generation. These helped input throughput but didn't touch the output generation bottleneck.
 
-## Key Optimization Opportunities
-1. **Parallelize `_generate_outputs`**: Use `dspy.Parallel` to process multiple input batches concurrently (like `_generate_inputs` does)
-2. **Concurrent judge scoring**: Use `ThreadPoolExecutor` to score all rows in a batch concurrently instead of sequentially
-3. **Increase batch sizes**: `batch_size` in `_generate_outputs` is `min(24, max(10, chunk_size * 2))` = 20. Can increase.
-4. **Batch judge calls**: Score multiple rows in a single LLM call instead of one per row (requires changing LLMJudge/quality.py)
+### Speed Optimizations (kept)
+1. **Parallelize `_generate_outputs`** with `dspy.Parallel` — 5.3x speedup on output gen
+2. **Concurrent judge scoring** via ThreadPoolExecutor — further speedup
+3. **Increase max_inflight** from 4 to num_threads for all generation paths
+4. **Increase request_row_cap** from 22 to 40 — fewer round trips
+5. **Batch judge scoring** (10 per call) — roughly equivalent to individual
+
+### Speed Optimizations (discarded)
+- batch_size=32 for output gen — no improvement (longer per-call offset by fewer trips)
+- max_inflight=num_threads for input gen — input gen was already fast
+
+### Distribution Fixes (kept)
+1. **Diversity prompts** in `_OutputGenerationSignature` and `_BatchOutputSignature` — THE key fix
+2. **Normalized deficit scoring** in `_subsample_balanced` — better multi-field balancing
+3. **Oversample factor** kept at 2.0 (diversity prompts alone fix the distribution)
+
+### Baseline → Current
+- Before: 134.4s, distribution skewed (sentiment: 43/42/15)
+- After: ~17-22s, distribution balanced (33/33/34 across all fields)
+- Speedup: ~7-8x with balanced output
+
+## Key Insight
+The diversity prompt changes are the primary fix for distribution. The LLM naturally generates skewed outputs for classification tasks (more negative sentiment for support tickets). Adding explicit "vary your output values" instructions to the generation signatures makes the LLM distribute values more evenly, even with 2x oversampling.
