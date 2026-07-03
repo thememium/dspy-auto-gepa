@@ -793,7 +793,7 @@ class AutoData:
         output_spec = self._field_spec_json(self.output_fields, metadata)
         validator = _build_validator(self.output_fields, metadata, include_enum=False)
         max_retries = self.config.max_retries
-        batch_size = min(20, max(10, self.config.chunk_size * 2))
+        batch_size = min(24, max(10, self.config.chunk_size * 2))
 
         judge = None
         if self.config.judge_enabled:
