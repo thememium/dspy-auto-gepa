@@ -786,6 +786,8 @@ class AutoData:
         writer: StreamingDatasetWriter | None = None,
         progress: tqdm | None = None,
     ) -> tuple[list[dict[str, Any] | None], list[float] | None]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         metadata = self._ensure_metadata()
         output_model = _build_output_model(metadata, self.output_fields)
         batch_sig = _build_batch_output_signature(output_model)
@@ -817,13 +819,12 @@ class AutoData:
                     return result
             return None
 
-        rows_to_write: list[dict[str, Any]] = []
-
-        def _validate_and_accept(
-            inp: dict[str, Any], raw_output: Any, idx: int
-        ) -> bool:
+        def _validate_output(
+            inp: dict[str, Any], raw_output: Any
+        ) -> dict[str, Any] | None:
+            """Validate a single raw output and return clean_output or None."""
             if isinstance(raw_output, Exception):
-                return False
+                return None
             items = raw_output if isinstance(raw_output, list) else [raw_output]
             for item in items:
                 parsed = _to_dict(item)
@@ -852,76 +853,167 @@ class AutoData:
                 val_result = validator.validate(clean_output)
                 if not val_result.is_valid:
                     continue
-                score = None
-                if judge is not None:
-                    full_row = {**inp, **clean_output}
-                    score = judge.score(full_row, task_description=description).score
-                output_map[idx] = (clean_output, score)
-                rows_to_write.append({**inp, **clean_output})
-                return True
-            return False
+                return clean_output
+            return None
+
+        def _score_row(
+            inp: dict[str, Any], clean_output: dict[str, Any]
+        ) -> float | None:
+            """Score a validated row with the LLM judge (runs in thread pool)."""
+            if judge is None:
+                return None
+            full_row = {**inp, **clean_output}
+            return judge.score(full_row, task_description=description).score
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        max_total_attempts = max(max_retries * 5, len(inputs))
+        consecutive_failures = 0
 
         with dspy.settings.context(lm=self.data_lm):
-            for attempt in range(max_retries * 3):
-                if not pending_indices:
+            while pending_indices:
+                if consecutive_failures >= max_total_attempts:
                     break
 
-                batch_indices = pending_indices[:batch_size]
-                batch_inputs = [inputs[i] for i in batch_indices]
-                inputs_json = json.dumps(batch_inputs, default=str)
+                # Split pending into batches for parallel execution
+                chunk_batches = min(
+                    self._parallel_request_budget(),
+                    (len(pending_indices) + batch_size - 1) // batch_size,
+                )
 
-                try:
-                    result = batch_predictor(
+                tasks = []
+                batch_starts: list[list[int]] = []
+                for chunk_idx in range(chunk_batches):
+                    start = chunk_idx * batch_size
+                    end = min(start + batch_size, len(pending_indices))
+                    if start >= len(pending_indices):
+                        break
+                    batch_indices = pending_indices[start:end]
+                    batch_starts.append(batch_indices)
+                    batch_inputs = [inputs[i] for i in batch_indices]
+                    inputs_json = json.dumps(batch_inputs, default=str)
+                    example = dspy.Example(
                         task_description=description,
                         inputs_json=inputs_json,
                         n_to_generate=len(batch_indices),
+                    ).with_inputs(
+                        "task_description",
+                        "inputs_json",
+                        "n_to_generate",
                     )
-                    raw_outputs = result.generated_outputs
-                    if not isinstance(raw_outputs, list):
-                        raw_outputs = [raw_outputs]
-                except Exception as exc:
-                    tqdm.write(
-                        f"  [warn] batch output generation failed: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                    raw_outputs = []
+                    tasks.append((batch_predictor, example))
 
-                rows_to_write = []
-                still_pending = []
-                for i, idx in enumerate(batch_indices):
-                    inp = inputs[idx]
-                    if i < len(raw_outputs):
-                        if _validate_and_accept(inp, raw_outputs[i], idx):
-                            continue
-                    still_pending.append(idx)
+                exec_results = parallel(tasks)
+                # dspy.Parallel with return_failed_examples=True returns
+                # (results, failed_examples, exceptions) tuple.
+                if isinstance(exec_results, tuple):
+                    exec_results = exec_results[0]
 
-                for idx in still_pending:
-                    inp = inputs[idx]
-                    try:
-                        single_result = single_predictor(
+                # Process all results: validate outputs
+                validated: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+                failed_indices: list[int] = []
+
+                for chunk_i, result in enumerate(exec_results):
+                    if chunk_i >= len(batch_starts):
+                        break
+                    batch_indices = batch_starts[chunk_i]
+                    if isinstance(result, Exception):
+                        failed_indices.extend(batch_indices)
+                        continue
+                    if isinstance(result, dspy.Prediction):
+                        raw_outputs = result.generated_outputs
+                        if not isinstance(raw_outputs, list):
+                            raw_outputs = [raw_outputs]
+                    elif isinstance(result, list):
+                        raw_outputs = result
+                    else:
+                        raw_outputs = [result]
+                    for i, idx in enumerate(batch_indices):
+                        inp = inputs[idx]
+                        raw = raw_outputs[i] if i < len(raw_outputs) else None
+                        clean_output = _validate_output(inp, raw) if raw is not None else None
+                        if clean_output is not None:
+                            validated.append((idx, inp, clean_output))
+                        else:
+                            failed_indices.append(idx)
+
+                # Fallback: try single generation for failed indices
+                if failed_indices:
+                    single_tasks = []
+                    for idx in failed_indices:
+                        inp = inputs[idx]
+                        single_input = json.dumps(inp, default=str)
+                        example = dspy.Example(
                             task_description=description,
-                            input_data=json.dumps(inp, default=str),
+                            input_data=single_input,
                             output_field_spec=output_spec,
+                        ).with_inputs(
+                            "task_description",
+                            "input_data",
+                            "output_field_spec",
                         )
-                        _validate_and_accept(inp, single_result, idx)
-                    except Exception as exc:
-                        tqdm.write(
-                            f"  [warn] single output generation failed for "
-                            f"row {idx}: {type(exc).__name__}: {exc}"
-                        )
+                        single_tasks.append((single_predictor, example))
 
+                    single_results = parallel(single_tasks)
+                    if isinstance(single_results, tuple):
+                        single_results = single_results[0]
+                    validated_set = {v[0] for v in validated}
+                    for i, result in enumerate(single_results):
+                        if i >= len(failed_indices):
+                            break
+                        idx = failed_indices[i]
+                        if idx in validated_set:
+                            continue
+                        if isinstance(result, Exception):
+                            continue
+                        inp = inputs[idx]
+                        clean_output = _validate_output(inp, result)
+                        if clean_output is not None:
+                            validated.append((idx, inp, clean_output))
+
+                # Concurrent judge scoring via thread pool
+                if judge is not None and validated:
+                    with ThreadPoolExecutor(
+                        max_workers=self.config.num_threads
+                    ) as pool:
+                        futures = {
+                            pool.submit(_score_row, inp, clean_output): (idx, inp, clean_output)
+                            for idx, inp, clean_output in validated
+                        }
+                        for future in as_completed(futures):
+                            idx, inp, clean_output = futures[future]
+                            try:
+                                score = future.result()
+                            except Exception:
+                                score = None
+                            output_map[idx] = (clean_output, score)
+                else:
+                    for idx, inp, clean_output in validated:
+                        output_map[idx] = (clean_output, None)
+
+                # Write all validated rows and update progress
+                rows_to_write = [
+                    {**inp, **co} for _, inp, co in validated
+                ]
                 if writer is not None and rows_to_write:
                     writer.write_rows(rows_to_write)
 
-                accepted = (
-                    len(batch_indices)
-                    - len(still_pending)
-                    + sum(1 for idx in still_pending if idx in output_map)
-                )
                 if progress is not None:
-                    progress.update(accepted)
+                    progress.update(len(validated))
 
-                pending_indices = [i for i in pending_indices if i not in output_map]
+                accepted_this_chunk = len(validated)
+                if accepted_this_chunk == 0:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
+
+                pending_indices = [
+                    i for i in pending_indices if i not in output_map
+                ]
 
         all_outputs: list[dict[str, Any] | None] = []
         all_scores: list[float] = []
