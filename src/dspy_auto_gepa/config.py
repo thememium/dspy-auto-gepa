@@ -41,7 +41,20 @@ class AutoGEPAConfig:
 
 @dataclass
 class AutoDataConfig:
-    """Configuration for the automatic data generation pipeline."""
+    """Configuration for the automatic data generation pipeline.
+
+    Attributes
+    ----------
+    generation_mode :
+        How to generate data rows.
+
+        * ``"split"`` — two-phase: generate inputs first, then outputs
+          separately.  Works well for simple classification-style tasks.
+        * ``"signature"`` — single-phase: generate complete rows
+          (inputs + outputs) in one shot using the module's actual
+          Signature.  Better for complex, tightly-coupled outputs such as
+          ReAct reasoning traces or RLM explorations.
+    """
 
     n: int = 100
     seed: int = 42
@@ -58,6 +71,7 @@ class AutoDataConfig:
     balance_outputs: bool = True
     balance_tolerance: float = 0.15
     oversample_factor: float = 2.0
+    generation_mode: Literal["split", "signature"] = "split"
 
     def __post_init__(self) -> None:
         if self.n <= 0:
@@ -68,3 +82,5 @@ class AutoDataConfig:
             raise ValueError("chunk_size must be positive")
         if not (0.0 <= self.diversity_threshold <= 1.0):
             raise ValueError("diversity_threshold must be between 0.0 and 1.0")
+        if self.generation_mode not in ("split", "signature"):
+            raise ValueError("generation_mode must be one of: 'split', 'signature'")
