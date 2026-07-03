@@ -1,0 +1,1 @@
+{"type":"config","name":"Optimize AutoData generation for speed, rate-limit safety, and quality","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
