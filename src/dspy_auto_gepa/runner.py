@@ -447,22 +447,27 @@ class AutoGEPA:
         Returns:
             List of generated row dicts.
         """
+        from .config import AutoDataConfig
         from .generator import AutoData
 
         resolved_lm = data_lm or self._data_lm or self.config.metric_lm
 
         if self.module is None:
             raise ValueError("module must be provided to generate data")
-        gen = AutoData(
-            module=self.module,
-            data_lm=resolved_lm,
-            schema=schema,
-            name=self.name,
-        )
-        result = gen.generate(
+
+        config = AutoDataConfig(
             n=n,
             seed_examples=seed_examples,
             force=force,
             output_path=output_path,
         )
+
+        gen = AutoData(
+            module=self.module,
+            data_lm=resolved_lm,
+            schema=schema,
+            name=self.name,
+            config=config,
+        )
+        result = gen.generate()
         return result.rows
