@@ -801,7 +801,6 @@ class AutoData:
             judge = LLMJudge(lm=judge_lm)
 
         output_map: dict[int, tuple[dict[str, Any], float | None]] = {}
-        written_indices: set[int] = set()
         pending_indices = list(range(len(inputs)))
 
         def _to_dict(raw: Any) -> dict[str, Any] | None:
@@ -857,9 +856,7 @@ class AutoData:
                     full_row = {**inp, **clean_output}
                     score = judge.score(full_row, task_description=description).score
                 output_map[idx] = (clean_output, score)
-                if idx not in written_indices:
-                    rows_to_write.append({**inp, **clean_output})
-                    written_indices.add(idx)
+                rows_to_write.append({**inp, **clean_output})
                 return True
             return False
 
