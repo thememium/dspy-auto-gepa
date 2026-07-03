@@ -5,7 +5,7 @@ All LLM calls are mocked — no real API traffic.
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import dspy
@@ -452,10 +452,10 @@ class TestAutoDataGeneration:
             module=DummyModule(),
             data_lm=MagicMock(),
             description="Classify tickets",
-            config=_make_autodata_config(n=2),
+            config=_make_autodata_config(n=2, output_path=output_path, force=True),
         )
 
-        result = gen.generate(n=2, output_path=output_path, force=True)
+        result = gen.generate()
 
         assert isinstance(result, GenerationResult)
         assert result.n_produced == 2
@@ -487,10 +487,10 @@ class TestAutoDataGeneration:
             module=DummyModule(),
             data_lm=MagicMock(),
             description="Classify tickets",
-            config=_make_autodata_config(n=3),
+            config=_make_autodata_config(n=3, output_path=output_path, force=False),
         )
 
-        result = gen.generate(n=3, output_path=output_path, force=False)
+        result = gen.generate()
 
         assert result.n_produced == 3
         assert len(result.rows) == 3
@@ -530,7 +530,7 @@ class TestAutoDataGeneration:
             config=_make_autodata_config(n=1),
         )
 
-        result = gen.generate(n=1, output_path=output_path, force=True)
+        result = gen.generate(output_path=output_path, force=True)
 
         assert result.n_produced == 1
         assert result.rows[0]["message"] == "new1"
@@ -1346,7 +1346,7 @@ class TestSignatureGenerationMode:
     def test_config_generation_mode_validation(self) -> None:
         """AutoDataConfig rejects invalid generation_mode values."""
         with pytest.raises(ValueError, match="generation_mode must be one of"):
-            AutoDataConfig(generation_mode="invalid")
+            AutoDataConfig(generation_mode=cast(Any, "invalid"))
 
     def test_config_generation_mode_default(self) -> None:
         """AutoDataConfig defaults to generation_mode='split'."""
@@ -1548,7 +1548,7 @@ class TestSignatureGenerationMode:
             config=_make_autodata_config(n=2, generation_mode="signature"),
         )
 
-        result = gen.generate(n=2, output_path=output_path, force=True)
+        result = gen.generate(output_path=output_path, force=True)
 
         assert isinstance(result, GenerationResult)
         assert result.n_produced == 2
@@ -1629,3 +1629,39 @@ class TestSignatureGenerationMode:
         rows, _ = gen._generate_signature_mode(1, None, "Classify tickets")
         assert len(rows) == 1
         assert rows[0]["message"] == "valid message"
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_with_diversity_categories(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode passes diversity_categories to the predictor."""
+        mock_predictor = MagicMock()
+        mock_predictor.return_value = dspy.Prediction(
+            generated_rows=json.dumps(
+                [{"message": "test", "urgency": "low", "sentiment": "neutral"}]
+            )
+        )
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, executed_tasks = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        categories = "science, history, geography"
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(
+                n=1,
+                generation_mode="signature",
+                diversity_categories=categories,
+            ),
+        )
+
+        rows, _ = gen._generate_signature_mode(1, None, "Classify tickets")
+
+        assert len(rows) == 1
+        assert len(executed_tasks) > 0
+        _, example = executed_tasks[0]
+        assert example.diversity_categories == categories
