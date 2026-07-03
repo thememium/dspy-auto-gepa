@@ -61,6 +61,7 @@ class AutoDataConfig:
     max_retries: int = 8
     num_threads: int = 16
     chunk_size: int = 10
+    max_inflight_requests: int | None = 4
     diversity_threshold: float = 0.3
     judge_enabled: bool = True
     validators_enabled: bool = True
@@ -84,6 +85,8 @@ class AutoDataConfig:
             raise ValueError("max_retries must be positive")
         if self.chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
+        if self.max_inflight_requests is not None and self.max_inflight_requests <= 0:
+            raise ValueError("max_inflight_requests must be positive when set")
         if not (0.0 <= self.diversity_threshold <= 1.0):
             raise ValueError("diversity_threshold must be between 0.0 and 1.0")
         if self.generation_mode not in ("split", "signature"):

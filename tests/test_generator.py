@@ -588,6 +588,53 @@ class TestAutoDataGeneration:
 
     @patch("dspy_auto_gepa.generator.dspy.Parallel")
     @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_inputs_caps_inflight_requests(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_inputs respects max_inflight_requests when batching tasks."""
+        counter = 0
+
+        def predict_side_effect(*args, **kwargs):
+            nonlocal counter
+            value = counter
+            counter += 1
+            return dspy.Prediction(
+                generated_inputs=json.dumps([{"message": f"msg{value}"}])
+            )
+
+        mock_predictor = MagicMock(side_effect=predict_side_effect)
+        mock_predict_cls.return_value = mock_predictor
+
+        call_sizes: list[int] = []
+
+        class SyncParallel:
+            def __init__(self, **kwargs):
+                pass
+
+            def __call__(self, tasks):
+                call_sizes.append(len(tasks))
+                return [
+                    module(**{k: example[k] for k in example.keys()})
+                    for module, example in tasks
+                ]
+
+        mock_parallel_cls.side_effect = lambda **kwargs: SyncParallel(**kwargs)
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=5, chunk_size=6, max_inflight_requests=2),
+        )
+
+        inputs = gen._generate_inputs(5, None, "Classify tickets")
+
+        assert len(inputs) == 5
+        assert call_sizes
+        assert max(call_sizes) <= 2
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
     def test_generate_inputs_with_seed_examples(
         self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
     ) -> None:
@@ -1357,6 +1404,10 @@ class TestSignatureGenerationMode:
         """AutoDataConfig accepts generation_mode='signature'."""
         config = AutoDataConfig(generation_mode="signature")
         assert config.generation_mode == "signature"
+
+    def test_config_max_inflight_requests_validation(self) -> None:
+        with pytest.raises(ValueError, match="max_inflight_requests must be positive"):
+            AutoDataConfig(max_inflight_requests=0)
 
     def test_build_signature_generation_signature(self) -> None:
         """_build_signature_generation_signature returns a valid DSPy Signature class."""

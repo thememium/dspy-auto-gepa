@@ -482,6 +482,24 @@ def _compute_output_combos(
     return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
 
 
+def _canonicalize_for_fingerprint(value: Any) -> str:
+    if value is None:
+        return "__none__"
+    if isinstance(value, str):
+        return sanitize_string(value).lower()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True, default=str)
+    if isinstance(value, (list, tuple)):
+        return json.dumps(list(value), sort_keys=True, default=str)
+    if hasattr(value, "model_dump"):
+        return json.dumps(value.model_dump(), sort_keys=True, default=str)
+    if hasattr(value, "dict"):
+        return json.dumps(value.dict(), sort_keys=True, default=str)
+    return str(value)
+
+
 class AutoData:
     def __init__(
         self,
@@ -560,6 +578,23 @@ class AutoData:
             spec[name] = entry
         return json.dumps(spec)
 
+    def _parallel_request_budget(self) -> int:
+        budget = min(self.config.chunk_size, self.config.num_threads)
+        if self.config.max_inflight_requests is not None:
+            budget = min(budget, self.config.max_inflight_requests)
+        return max(1, budget)
+
+    def _row_fingerprint(self, row: dict[str, Any], field_names: list[str]) -> str:
+        parts = []
+        for key in sorted(field_names):
+            parts.append(f"{key}={_canonicalize_for_fingerprint(row.get(key))}")
+        return "|".join(parts)
+
+    def _fingerprint_set(
+        self, rows: list[dict[str, Any]], field_names: list[str]
+    ) -> set[str]:
+        return {self._row_fingerprint(row, field_names) for row in rows}
+
     def _generate_inputs(
         self,
         n: int,
@@ -575,6 +610,7 @@ class AutoData:
         validator = _build_validator(self.input_fields, metadata)
 
         all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        existing_fingerprints = self._fingerprint_set(all_existing, self.input_fields)
         recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
         covered_values: dict[str, set[str]] = {f: set() for f in self.input_fields}
         for row in all_existing:
@@ -583,33 +619,8 @@ class AutoData:
                 if isinstance(val, str) and val.strip():
                     covered_values[f].add(val.strip().lower())
 
-        def _canonicalize(value: Any) -> str:
-            if value is None:
-                return "__none__"
-            if isinstance(value, str):
-                return sanitize_string(value).lower()
-            if isinstance(value, (int, float, bool)):
-                return str(value)
-            if isinstance(value, dict):
-                return json.dumps(value, sort_keys=True, default=str)
-            if isinstance(value, (list, tuple)):
-                return json.dumps(list(value), sort_keys=True, default=str)
-            if hasattr(value, "model_dump"):
-                return json.dumps(value.model_dump(), sort_keys=True, default=str)
-            if hasattr(value, "dict"):
-                return json.dumps(value.dict(), sort_keys=True, default=str)
-            return str(value)
-
-        def _row_fingerprint(row: dict[str, Any]) -> str:
-            parts = []
-            for k in sorted(row.keys()):
-                if k in self.input_fields:
-                    parts.append(f"{k}={_canonicalize(row[k])}")
-            return "|".join(parts)
-
         def _is_duplicate(row: dict[str, Any]) -> bool:
-            fp = _row_fingerprint(row)
-            return any(_row_fingerprint(e) == fp for e in all_existing)
+            return self._row_fingerprint(row, self.input_fields) in existing_fingerprints
 
         def _covered_themes_str() -> str:
             parts = []
@@ -654,7 +665,7 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self.config.chunk_size,
+                    self._parallel_request_budget(),
                     (n - len(all_inputs) + 9) // 10,
                 )
 
@@ -718,6 +729,9 @@ class AutoData:
 
                             all_inputs.append(clean_row)
                             all_existing.append(clean_row)
+                            existing_fingerprints.add(
+                                self._row_fingerprint(clean_row, self.input_fields)
+                            )
                             recent_window.append(clean_row)
                             if len(recent_window) > 20:
                                 recent_window = recent_window[-20:]
@@ -926,6 +940,7 @@ class AutoData:
         all_rows: list[dict[str, Any]] = []
         all_scores: list[float] = []
         all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        existing_fingerprints = self._fingerprint_set(all_existing, all_fields)
         recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
         covered_values: dict[str, set[str]] = {f: set() for f in all_fields}
         for row in all_existing:
@@ -934,33 +949,8 @@ class AutoData:
                 if isinstance(val, str) and val.strip():
                     covered_values[f].add(val.strip().lower())
 
-        def _canonicalize(value: Any) -> str:
-            if value is None:
-                return "__none__"
-            if isinstance(value, str):
-                return sanitize_string(value).lower()
-            if isinstance(value, (int, float, bool)):
-                return str(value)
-            if isinstance(value, dict):
-                return json.dumps(value, sort_keys=True, default=str)
-            if isinstance(value, (list, tuple)):
-                return json.dumps(list(value), sort_keys=True, default=str)
-            if hasattr(value, "model_dump"):
-                return json.dumps(value.model_dump(), sort_keys=True, default=str)
-            if hasattr(value, "dict"):
-                return json.dumps(value.dict(), sort_keys=True, default=str)
-            return str(value)
-
-        def _row_fingerprint(row: dict[str, Any]) -> str:
-            parts = []
-            for k in sorted(row.keys()):
-                if k in all_fields:
-                    parts.append(f"{k}={_canonicalize(row[k])}")
-            return "|".join(parts)
-
         def _is_duplicate(row: dict[str, Any]) -> bool:
-            fp = _row_fingerprint(row)
-            return any(_row_fingerprint(e) == fp for e in all_existing)
+            return self._row_fingerprint(row, all_fields) in existing_fingerprints
 
         def _covered_themes_str() -> str:
             parts = []
@@ -984,7 +974,7 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self.config.chunk_size,
+                    self._parallel_request_budget(),
                     (n - len(all_rows) + 9) // 10,
                 )
 
@@ -1055,6 +1045,9 @@ class AutoData:
                             all_rows.append(clean_row)
                             all_scores.append(score or 0.0)
                             all_existing.append(clean_row)
+                            existing_fingerprints.add(
+                                self._row_fingerprint(clean_row, all_fields)
+                            )
                             recent_window.append(clean_row)
                             if len(recent_window) > 20:
                                 recent_window = recent_window[-20:]
@@ -1197,8 +1190,9 @@ class AutoData:
             output_bar = tqdm(
                 total=len(inputs), desc="Generating outputs", unit="row", leave=True
             )
+            output_writer = None if output_combos is not None else writer
             outputs, quality_scores = self._generate_outputs(
-                inputs, description, writer=writer, progress=output_bar
+                inputs, description, writer=output_writer, progress=output_bar
             )
             output_bar.close()
 
@@ -1210,15 +1204,11 @@ class AutoData:
                     if quality_scores is not None and i < len(quality_scores):
                         row_scores.append(quality_scores[i])
 
-            if (
-                self.config.balance_outputs
-                and output_combos is not None
-                and len(complete_rows) > n
-            ):
-                complete_rows, row_scores = self._subsample_balanced(
-                    complete_rows, n, row_scores
-                )
-                tqdm.write(f"Rewriting {len(complete_rows)} balanced rows to disk")
+            if output_combos is not None:
+                if len(complete_rows) > n:
+                    complete_rows, row_scores = self._subsample_balanced(
+                        complete_rows, n, row_scores
+                    )
                 writer.truncate()
                 for row in complete_rows:
                     writer.write_row(row)
@@ -1290,7 +1280,8 @@ class AutoData:
         for _ in range(min(n, len(pool))):
             best_idx = -1
             best_score = -1.0
-            for i, (row, _) in enumerate(pool):
+            best_quality = float("-inf")
+            for i, (row, row_quality) in enumerate(pool):
                 score = 0.0
                 for fname in categorical_fields:
                     val = row.get(fname)
@@ -1298,8 +1289,11 @@ class AutoData:
                         val_lower = val.strip().lower()
                         deficit = target_per_value[fname] - counts[fname][val_lower]
                         score += max(0.0, deficit)
-                if score > best_score:
+                if score > best_score or (
+                    score == best_score and row_quality > best_quality
+                ):
                     best_score = score
+                    best_quality = row_quality
                     best_idx = i
             if best_idx == -1:
                 break
