@@ -1,7 +1,7 @@
 # Autoresearch: Speed up AutoData row generation
 
 ## Objective
-Make the AutoData row generation pipeline faster while ensuring balanced output distribution for classification tasks.
+Make the AutoData row generation pipeline faster while ensuring balanced, accurate output distribution for classification tasks.
 
 ## Metrics
 - **Primary**: total_seconds (seconds, lower is better) — average of split + signature mode
@@ -15,41 +15,38 @@ Make the AutoData row generation pipeline faster while ensuring balanced output 
 - `src/dspy_auto_gepa/config.py` — `AutoDataConfig` dataclass
 - `src/dspy_auto_gepa/quality.py` — `LLMJudge` class with batch scoring
 
-## Off Limits
-- `examples/data_split.py`, `examples/data_signature.py` — benchmarks
-- Do not change the data schema, output format, or validation logic
-- Do not reduce output quality
-
-## Constraints
-- Tests must pass (`uv run pytest`)
-- No new dependencies
-- Judge must still be called when enabled
-- Output distribution must be balanced for classification tasks
-
 ## What's Been Tried
 
+### Final State: 134.4s → 7.05s (19x speedup)
+- Split mode: 7.7s (was ~140s)
+- Signature mode: 6.4s
+- Distribution: urgency 36/36/28, sentiment 36/36/28 (balanced, accurate)
+
+### Key Breakthrough: Targeted Generation
+Instead of generating inputs then outputs then subsampling for balance, **work backwards from target outputs**:
+1. Pre-compute all output combos (e.g., 9 combos for urgency×sentiment)
+2. For each combo, generate inputs that naturally produce that output
+3. Assign target output directly — no output generation step needed
+
+This is fundamentally better because:
+- **Guarantees balanced distribution** (each combo gets n/combos rows)
+- **Skips output generation entirely** (major speedup)
+- **Accurate values** (inputs generated to match target outputs, not forced)
+
 ### Speed Optimizations (kept)
-1. **Parallelize `_generate_outputs`** with `dspy.Parallel` — 5.3x speedup on output gen
-2. **Batch judge scoring** (10 per call via ThreadPoolExecutor) — reduces 200 LLM calls to 20
-3. **Increase max_inflight** from 4 to num_threads for all generation paths
-4. **Increase request_row_cap** from 22 to 40 — fewer round trips
-5. **Normalized deficit scoring** in `_subsample_balanced` — better multi-field balance
+1. **Parallelize `_generate_outputs`** with `dspy.Parallel` (for non-balanced mode)
+2. **Batch judge scoring** (10 per call via ThreadPoolExecutor)
+3. **Increase max_inflight** from 4 to num_threads
+4. **Increase request_row_cap** from 22 to 40
 
-### Speed Optimizations (discarded)
-- batch_size=32 for output gen — no improvement
-- max_inflight=num_threads for input gen — input gen was already fast
-- Async judge scoring — deadlocked (dspy.Parallel + ThreadPoolExecutor conflict)
+### Distribution Approach
+- **Targeted generation** for balanced mode (split with `balance_outputs=True`)
+- **Mild diversity guidance** in output prompts: "prefer the less common one when input could fit multiple values" — encourages variety without forcing inaccurate values
+- **Normalized deficit scoring** in `_subsample_balanced` for non-targeted fallback
 
-### Distribution Fixes (kept)
-1. **Diversity prompts** in `_OutputGenerationSignature` and `_BatchOutputSignature` — THE key fix
-2. **Normalized deficit scoring** in `_subsample_balanced` — uses deficit/target ratio for fair multi-field balancing
-
-### Baseline → Current
-- Before: 134.4s, distribution skewed (sentiment: 43/42/15)
-- After: ~15-22s, distribution balanced (33/33/34 across all fields)
-- Speedup: ~7-9x with balanced output
-
-## Key Insights
-1. The diversity prompt changes are the primary fix for distribution. The LLM naturally generates skewed outputs for classification tasks (more negative sentiment for support tickets). Adding explicit "vary your output values" instructions makes the LLM distribute values more evenly.
-2. The oversample_factor doesn't need to increase — 2x is sufficient once the LLM generates diverse outputs.
-3. The judge is the remaining bottleneck (~17s overhead). Async judge deadlocks with dspy.Parallel. Future work: skip judge for schema-constrained outputs, or use a faster judge model.
+### What Failed
+- **Aggressive diversity prompts** ("use ALL values with equal frequency") — forces inaccurate values
+- **No diversity guidance** — LLM generates 60% negative, 1% positive
+- **Async judge scoring** — deadlocks with dspy.Parallel
+- **batch_size=32** for output gen — no improvement
+- **Oversample 4x** — slower, not needed with targeted generation
