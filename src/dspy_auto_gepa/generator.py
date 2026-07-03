@@ -859,15 +859,6 @@ class AutoData:
                 return clean_output
             return None
 
-        def _score_row(
-            inp: dict[str, Any], clean_output: dict[str, Any]
-        ) -> float | None:
-            """Score a validated row with the LLM judge (runs in thread pool)."""
-            if judge is None:
-                return None
-            full_row = {**inp, **clean_output}
-            return judge.score(full_row, task_description=description).score
-
         parallel = dspy.Parallel(
             num_threads=self.config.num_threads,
             return_failed_examples=True,
@@ -978,22 +969,46 @@ class AutoData:
                         if clean_output is not None:
                             validated.append((idx, inp, clean_output))
 
-                # Concurrent judge scoring via thread pool
+                # Score validated rows using moderate batching (10 per LLM call)
                 if judge is not None and validated:
+                    judge_batch_size = 10
+                    all_validated = [
+                        (idx, inp, co) for idx, inp, co in validated
+                    ]
+
+                    def _score_batch(
+                        batch: list[tuple[int, dict[str, Any], dict[str, Any]]],
+                    ) -> list[tuple[int, float | None]]:
+                        rows = [{**inp, **co} for _, inp, co in batch]
+                        scores = judge.batch_score(rows, task_description=description)
+                        return [
+                            (batch[i][0], scores[i].score)
+                            for i in range(len(batch))
+                        ]
+
+                    batches = [
+                        all_validated[i : i + judge_batch_size]
+                        for i in range(0, len(all_validated), judge_batch_size)
+                    ]
+
                     with ThreadPoolExecutor(
                         max_workers=self.config.num_threads
                     ) as pool:
-                        futures = {
-                            pool.submit(_score_row, inp, clean_output): (idx, inp, clean_output)
-                            for idx, inp, clean_output in validated
-                        }
+                        futures = [pool.submit(_score_batch, b) for b in batches]
                         for future in as_completed(futures):
-                            idx, inp, clean_output = futures[future]
                             try:
-                                score = future.result()
+                                for idx, score in future.result():
+                                    inp = inputs[idx]
+                                    co = next(
+                                        c for i, _, c in validated if i == idx
+                                    )
+                                    output_map[idx] = (co, score)
                             except Exception:
-                                score = None
-                            output_map[idx] = (clean_output, score)
+                                pass
+                    # Fallback: set score=None for any validated rows not yet in output_map
+                    for idx, inp, co in validated:
+                        if idx not in output_map:
+                            output_map[idx] = (co, None)
                 else:
                     for idx, inp, clean_output in validated:
                         output_map[idx] = (clean_output, None)

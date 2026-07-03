@@ -149,6 +149,27 @@ class _JudgeSignature(dspy.Signature):
     feedback: str = dspy.OutputField(desc="Concise feedback explaining the scores")
 
 
+class _BatchJudgeSignature(dspy.Signature):
+    """Score multiple data rows on quality dimensions.
+
+    For each row, return a JSON object with scores (each dimension in [0.0, 1.0])
+    and brief feedback. Return a JSON array of result objects, one per input row,
+    in the SAME ORDER.
+    """
+
+    rows_json: str = dspy.InputField(
+        desc="JSON array of row objects to score"
+    )
+    rubric: str = dspy.InputField(desc="Comma-separated list of scoring dimensions")
+    task_description: str = dspy.InputField(desc="Optional task context", default="")
+    results_json: str = dspy.OutputField(
+        desc=(
+            'JSON array of {"scores": {dim: float}, "feedback": str} objects, '
+            'one per input row, in the same order.'
+        )
+    )
+
+
 class LLMJudge:
     """Uses an LLM via a DSPy Signature to score data rows on a rubric."""
 
@@ -160,6 +181,7 @@ class LLMJudge:
         self._lm = lm
         self._rubric = rubric or ["correctness", "relevance", "coherence"]
         self._predictor = dspy.Predict(_JudgeSignature)
+        self._batch_predictor = dspy.Predict(_BatchJudgeSignature)
 
     @property
     def rubric(self) -> list[str]:
@@ -204,6 +226,69 @@ class LLMJudge:
             feedback=str(result.feedback),
             scores=scores,
         )
+
+    def batch_score(
+        self,
+        rows: list[dict[str, Any]],
+        task_description: str = "",
+    ) -> list[JudgeResult]:
+        """Score multiple rows in a single LLM call.
+
+        Returns a list of :class:`JudgeResult` in the same order as *rows*.
+        Falls back to individual scoring for rows that fail to parse.
+        """
+        if not rows:
+            return []
+        if len(rows) == 1:
+            return [self.score(rows[0], task_description)]
+
+        rows_json = json.dumps(rows, default=str)
+        rubric_str = ", ".join(self._rubric)
+
+        try:
+            with dspy.context(lm=self._lm):
+                result = self._batch_predictor(
+                    rows_json=rows_json,
+                    rubric=rubric_str,
+                    task_description=task_description,
+                )
+        except Exception:
+            return [
+                JudgeResult(score=0.0, feedback="LLM judge call failed", scores={})
+                for _ in rows
+            ]
+
+        try:
+            parsed: list[dict[str, Any]] = json.loads(result.results_json)
+            if not isinstance(parsed, list):
+                parsed = [parsed]
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return [
+                JudgeResult(score=0.0, feedback="Failed to parse judge output", scores={})
+                for _ in rows
+            ]
+
+        results: list[JudgeResult] = []
+        for i in range(len(rows)):
+            if i < len(parsed):
+                entry = parsed[i]
+                try:
+                    scores = {k: float(v) for k, v in entry.get("scores", {}).items()}
+                    avg_score = sum(scores.values()) / len(scores) if scores else 0.0
+                    results.append(
+                        JudgeResult(
+                            score=min(avg_score, 1.0),
+                            feedback=str(entry.get("feedback", "")),
+                            scores=scores,
+                        )
+                    )
+                    continue
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            results.append(
+                JudgeResult(score=0.0, feedback="Failed to parse judge entry", scores={})
+            )
+        return results
 
 
 # ---------------------------------------------------------------------------
