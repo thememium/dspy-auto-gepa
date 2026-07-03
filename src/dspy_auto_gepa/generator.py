@@ -347,6 +347,72 @@ class _OutputGenerationSignature(dspy.Signature):
     )
 
 
+def _build_signature_generation_signature() -> type[dspy.Signature]:
+    """Build a DSPy Signature that generates complete rows using the user's signature.
+
+    The returned signature has:
+    - Inputs: task_description, recent_rows_json, covered_themes, n_to_generate
+    - Outputs: generated_rows (JSON array of complete rows)
+
+    This is used in "signature" generation mode where inputs and outputs
+    are generated together in one shot.
+    """
+
+    class _SignatureGenSig(dspy.Signature):
+        """Generate realistic data rows for a task.
+
+        Each row must contain ALL fields specified in the task signature —
+        both input and output fields.  The values must be coherent: outputs
+        must logically follow from the inputs.
+
+        CRITICAL: Every generated row MUST be completely unique. Do NOT repeat,
+        closely paraphrase, or slightly modify any existing row. Each new row
+        must cover a different scenario, use different wording, and represent a
+        distinct real-world case.
+
+        Return a JSON array of row objects. Each object must have exactly the
+        specified field names as keys. Do NOT include emoji or special
+        Unicode characters in string values.
+        """
+
+        task_description: str = dspy.InputField(
+            desc="Description of the task and what the fields mean"
+        )
+        field_spec: str = dspy.InputField(
+            desc=(
+                "JSON spec of ALL fields (inputs and outputs) with types, "
+                "descriptions, and allowed values. "
+                'Example: {"message": {"type": "str", "desc": "The support ticket text"}, '
+                '"urgency": {"type": "str", "allowed": ["low", "medium", "high"]}}'
+            )
+        )
+        recent_rows_json: str = dspy.InputField(
+            desc=(
+                "JSON array of the most recent rows generated. Use these to ensure "
+                "your new rows are DIFFERENT in topic, wording, and scenario."
+            ),
+            default="[]",
+        )
+        covered_themes: str = dspy.InputField(
+            desc=(
+                "Comma-separated list of themes/values already covered. You MUST "
+                "generate rows that explore NEW themes not in this list."
+            ),
+            default="",
+        )
+        n_to_generate: int = dspy.InputField(desc="Number of complete rows to generate")
+        generated_rows: str = dspy.OutputField(
+            desc=(
+                "JSON array of complete row objects. Each object must have exactly the "
+                "specified field names. No emoji. No empty strings. Every entry "
+                "MUST be completely different from all existing rows in both "
+                "structure and content. Outputs must logically follow from inputs."
+            )
+        )
+
+    return _SignatureGenSig
+
+
 def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
     """Build a DSPy Signature with strongly-typed batch output.
 
@@ -823,6 +889,189 @@ class AutoData:
 
         return all_outputs, all_scores if judge is not None else None
 
+    def _generate_signature_mode(
+        self,
+        n: int,
+        seed_examples: list[dict[str, Any]] | None,
+        description: str,
+        writer: StreamingDatasetWriter | None = None,
+        progress: tqdm | None = None,
+    ) -> tuple[list[dict[str, Any]], list[float] | None]:
+        """Generate complete rows (inputs + outputs) in one shot using the signature.
+
+        This is used when ``config.generation_mode == "signature"``.
+        """
+        metadata = self._ensure_metadata(seed_examples)
+        all_fields = self.input_fields + self.output_fields
+        field_spec = self._field_spec_json(all_fields, metadata)
+        validator = _build_validator(all_fields, metadata)
+        max_retries = self.config.max_retries
+
+        judge = None
+        if self.config.judge_enabled:
+            judge_lm = self.config.judge_lm or self.data_lm
+            judge = LLMJudge(lm=judge_lm)
+
+        sig_cls = _build_signature_generation_signature()
+        predictor = dspy.Predict(sig_cls)
+
+        all_rows: list[dict[str, Any]] = []
+        all_scores: list[float] = []
+        all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
+        covered_values: dict[str, set[str]] = {f: set() for f in all_fields}
+        for row in all_existing:
+            for f in all_fields:
+                val = row.get(f)
+                if isinstance(val, str) and val.strip():
+                    covered_values[f].add(val.strip().lower())
+
+        def _canonicalize(value: Any) -> str:
+            if value is None:
+                return "__none__"
+            if isinstance(value, str):
+                return sanitize_string(value).lower()
+            if isinstance(value, (int, float, bool)):
+                return str(value)
+            if isinstance(value, dict):
+                return json.dumps(value, sort_keys=True, default=str)
+            if isinstance(value, (list, tuple)):
+                return json.dumps(list(value), sort_keys=True, default=str)
+            if hasattr(value, "model_dump"):
+                return json.dumps(value.model_dump(), sort_keys=True, default=str)
+            if hasattr(value, "dict"):
+                return json.dumps(value.dict(), sort_keys=True, default=str)
+            return str(value)
+
+        def _row_fingerprint(row: dict[str, Any]) -> str:
+            parts = []
+            for k in sorted(row.keys()):
+                if k in all_fields:
+                    parts.append(f"{k}={_canonicalize(row[k])}")
+            return "|".join(parts)
+
+        def _is_duplicate(row: dict[str, Any]) -> bool:
+            fp = _row_fingerprint(row)
+            return any(_row_fingerprint(e) == fp for e in all_existing)
+
+        def _covered_themes_str() -> str:
+            parts = []
+            for f, vals in covered_values.items():
+                if vals:
+                    parts.append(f"{f}: {', '.join(sorted(vals))}")
+            return "; ".join(parts)
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        max_total_attempts = max(max_retries * 5, n)
+        consecutive_failures = 0
+
+        with dspy.settings.context(lm=self.data_lm):
+            while len(all_rows) < n:
+                if consecutive_failures >= max_total_attempts:
+                    break
+
+                chunk_batches = min(
+                    self.config.chunk_size,
+                    (n - len(all_rows) + 9) // 10,
+                )
+
+                recent_json = json.dumps(recent_window, default=str)
+                themes_str = _covered_themes_str()
+
+                tasks = []
+                for _ in range(chunk_batches):
+                    remaining = n - len(all_rows)
+                    batch_size = min(10, remaining)
+                    example = dspy.Example(
+                        task_description=description,
+                        field_spec=field_spec,
+                        recent_rows_json=recent_json,
+                        covered_themes=themes_str,
+                        n_to_generate=batch_size,
+                    ).with_inputs(
+                        "task_description",
+                        "field_spec",
+                        "recent_rows_json",
+                        "covered_themes",
+                        "n_to_generate",
+                    )
+                    tasks.append((predictor, example))
+
+                exec_results = parallel(tasks)
+
+                accepted_this_chunk = 0
+                for result in exec_results:
+                    if isinstance(result, Exception):
+                        continue
+                    generated = result if isinstance(result, list) else [result]
+                    for item in generated:
+                        if isinstance(item, dspy.Prediction):
+                            try:
+                                parsed = json.loads(_extract_json(item.generated_rows))
+                                if not isinstance(parsed, list):
+                                    parsed = [parsed]
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                continue
+                        elif isinstance(item, dict):
+                            parsed = [item]
+                        else:
+                            continue
+
+                        for row in parsed:
+                            if not isinstance(row, dict):
+                                continue
+                            clean_row, errs = _validate_and_sanitize_row(
+                                row, all_fields, metadata
+                            )
+                            if errs:
+                                continue
+                            val_result = validator.validate(clean_row)
+                            if not val_result.is_valid:
+                                continue
+                            if _is_duplicate(clean_row):
+                                continue
+
+                            score = None
+                            if judge is not None:
+                                score = judge.score(
+                                    clean_row, task_description=description
+                                ).score
+
+                            all_rows.append(clean_row)
+                            all_scores.append(score or 0.0)
+                            all_existing.append(clean_row)
+                            recent_window.append(clean_row)
+                            if len(recent_window) > 20:
+                                recent_window = recent_window[-20:]
+                            for f in all_fields:
+                                val = clean_row.get(f)
+                                if isinstance(val, str) and val.strip():
+                                    covered_values[f].add(val.strip().lower())
+
+                            if writer is not None:
+                                writer.write_row(clean_row)
+
+                            accepted_this_chunk += 1
+                            consecutive_failures = 0
+                            if progress is not None:
+                                progress.update(1)
+                            if len(all_rows) >= n:
+                                break
+                        if len(all_rows) >= n:
+                            break
+                    if len(all_rows) >= n:
+                        break
+
+                if accepted_this_chunk == 0:
+                    consecutive_failures += 1
+
+        return all_rows[:n], all_scores if judge else None
+
     @classmethod
     def from_csv(
         cls,
@@ -935,53 +1184,65 @@ class AutoData:
 
         self._ensure_metadata(resolved_seeds)
 
-        output_combos: list[dict[str, str]] | None = None
-        if self.config.balance_outputs and self._sig_metadata is not None:
-            output_combos = _compute_output_combos(
-                self.output_fields, self._sig_metadata
+        if self.config.generation_mode == "signature":
+            bar = tqdm(total=n, desc="Generating rows", unit="row", leave=True)
+            complete_rows, quality_scores = self._generate_signature_mode(
+                n, resolved_seeds, description, writer=writer, progress=bar
             )
-            if output_combos is not None:
-                tqdm.write(
-                    f"Balancing outputs across {len(output_combos)} target combos"
+            bar.close()
+            row_scores = quality_scores or []
+        else:
+            output_combos: list[dict[str, str]] | None = None
+            if self.config.balance_outputs and self._sig_metadata is not None:
+                output_combos = _compute_output_combos(
+                    self.output_fields, self._sig_metadata
                 )
+                if output_combos is not None:
+                    tqdm.write(
+                        f"Balancing outputs across {len(output_combos)} target combos"
+                    )
 
-        pool_n = n
-        if output_combos is not None:
-            pool_n = int(n * self.config.oversample_factor)
-            tqdm.write(f"Oversampling: generating {pool_n} rows for balance pool")
+            pool_n = n
+            if output_combos is not None:
+                pool_n = int(n * self.config.oversample_factor)
+                tqdm.write(f"Oversampling: generating {pool_n} rows for balance pool")
 
-        input_bar = tqdm(total=pool_n, desc="Generating inputs", unit="row", leave=True)
-        inputs = self._generate_inputs(pool_n, resolved_seeds, description, input_bar)
-        input_bar.close()
-
-        output_bar = tqdm(
-            total=len(inputs), desc="Generating outputs", unit="row", leave=True
-        )
-        outputs, quality_scores = self._generate_outputs(
-            inputs, description, writer=writer, progress=output_bar
-        )
-        output_bar.close()
-
-        complete_rows = []
-        row_scores: list[float] = []
-        for i, (inp, out) in enumerate(zip(inputs, outputs)):
-            if out is not None:
-                complete_rows.append({**inp, **out})
-                if quality_scores is not None and i < len(quality_scores):
-                    row_scores.append(quality_scores[i])
-
-        if (
-            self.config.balance_outputs
-            and output_combos is not None
-            and len(complete_rows) > n
-        ):
-            complete_rows, row_scores = self._subsample_balanced(
-                complete_rows, n, row_scores
+            input_bar = tqdm(
+                total=pool_n, desc="Generating inputs", unit="row", leave=True
             )
-            tqdm.write(f"Rewriting {len(complete_rows)} balanced rows to disk")
-            writer.truncate()
-            for row in complete_rows:
-                writer.write_row(row)
+            inputs = self._generate_inputs(
+                pool_n, resolved_seeds, description, input_bar
+            )
+            input_bar.close()
+
+            output_bar = tqdm(
+                total=len(inputs), desc="Generating outputs", unit="row", leave=True
+            )
+            outputs, quality_scores = self._generate_outputs(
+                inputs, description, writer=writer, progress=output_bar
+            )
+            output_bar.close()
+
+            complete_rows = []
+            row_scores: list[float] = []
+            for i, (inp, out) in enumerate(zip(inputs, outputs)):
+                if out is not None:
+                    complete_rows.append({**inp, **out})
+                    if quality_scores is not None and i < len(quality_scores):
+                        row_scores.append(quality_scores[i])
+
+            if (
+                self.config.balance_outputs
+                and output_combos is not None
+                and len(complete_rows) > n
+            ):
+                complete_rows, row_scores = self._subsample_balanced(
+                    complete_rows, n, row_scores
+                )
+                tqdm.write(f"Rewriting {len(complete_rows)} balanced rows to disk")
+                writer.truncate()
+                for row in complete_rows:
+                    writer.write_row(row)
 
         n_written = writer.row_count()
         elapsed = time.time() - start_time
