@@ -680,6 +680,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
+        request_row_cap = 12
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_inputs) < n:
@@ -688,7 +689,7 @@ class AutoData:
 
                 chunk_batches = min(
                     self._parallel_request_budget(),
-                    (n - len(all_inputs) + 9) // 10,
+                    (n - len(all_inputs) + request_row_cap - 1) // request_row_cap,
                 )
 
                 recent_json = json.dumps(recent_window, default=str)
@@ -697,7 +698,7 @@ class AutoData:
                 tasks = []
                 for _ in range(chunk_batches):
                     remaining = n - len(all_inputs)
-                    batch_size = min(10, remaining)
+                    batch_size = min(request_row_cap, remaining)
                     example = dspy.Example(
                         task_description=description,
                         input_field_spec=input_spec,
@@ -991,6 +992,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
+        request_row_cap = 12
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_rows) < n:
@@ -999,7 +1001,7 @@ class AutoData:
 
                 chunk_batches = min(
                     self._parallel_request_budget(),
-                    (n - len(all_rows) + 9) // 10,
+                    (n - len(all_rows) + request_row_cap - 1) // request_row_cap,
                 )
 
                 recent_json = json.dumps(recent_window, default=str)
@@ -1008,7 +1010,7 @@ class AutoData:
                 tasks = []
                 for _ in range(chunk_batches):
                     remaining = n - len(all_rows)
-                    batch_size = min(10, remaining)
+                    batch_size = min(request_row_cap, remaining)
                     example = dspy.Example(
                         task_description=description,
                         field_spec=field_spec,
