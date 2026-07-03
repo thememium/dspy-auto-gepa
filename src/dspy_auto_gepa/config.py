@@ -72,6 +72,10 @@ class AutoDataConfig:
     balance_tolerance: float = 0.15
     oversample_factor: float = 2.0
     generation_mode: Literal["split", "signature"] = "split"
+    diversity_categories: str = ""
+    seed_examples: list[dict[str, Any]] | None = None
+    output_path: str | Path | None = None
+    force: bool = False
 
     def __post_init__(self) -> None:
         if self.n <= 0:
