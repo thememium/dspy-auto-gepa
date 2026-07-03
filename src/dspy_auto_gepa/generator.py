@@ -351,9 +351,8 @@ class _OutputGenerationSignature(dspy.Signature):
     Values MUST match the allowed values listed in the field spec.
     Do NOT include emoji or special Unicode characters.
 
-    IMPORTANT: Vary your output values across calls. If allowed values are
-    provided, use ALL of them with roughly equal frequency over many calls.
-    Do not default to the same values repeatedly.
+    When the input could reasonably fit multiple allowed values, prefer the
+    less common one to maintain variety in the dataset.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
@@ -367,9 +366,7 @@ class _OutputGenerationSignature(dspy.Signature):
     generated_output: str = dspy.OutputField(
         desc=(
             "JSON object with exactly the specified output field names. "
-            "Values must be one of the allowed values if specified. "
-            "IMPORTANT: Use varied output values — do not repeat the same values "
-            "across different inputs."
+            "Values must be one of the allowed values if specified."
         )
     )
 
@@ -465,9 +462,8 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
         Return one output object per input, in the SAME ORDER as the inputs
         array.  Each object must match the schema exactly.
 
-        IMPORTANT: Vary output values across the batch. If allowed values are
-        specified, distribute them roughly evenly across all items. Do NOT
-        assign the same values to every item.
+        When an input could reasonably fit multiple allowed values, prefer
+        the less common one to maintain variety in the dataset.
         """
 
         task_description: str = dspy.InputField(desc="Description of the task")
