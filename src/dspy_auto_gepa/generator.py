@@ -680,7 +680,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
-        request_row_cap = 14
+        request_row_cap = 16
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_inputs) < n:
@@ -992,7 +992,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
-        request_row_cap = 14
+        request_row_cap = 16
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_rows) < n:
