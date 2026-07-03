@@ -371,6 +371,63 @@ class _OutputGenerationSignature(dspy.Signature):
     )
 
 
+class _TargetedInputGenerationSignature(dspy.Signature):
+    """Generate realistic input data that would produce a specific output.
+
+    You are given the DESIRED output values. Generate input data that would
+    naturally and correctly produce those exact output values when classified.
+
+    CRITICAL: Every generated input MUST be completely unique. Do NOT repeat,
+    closely paraphrase, or slightly modify any existing input. Each new input
+    must cover a different scenario, use different wording, and represent a
+    distinct real-world case.
+
+    The generated inputs must be realistic and clearly lead to the specified
+    output values — do NOT generate ambiguous inputs that could go either way.
+
+    Return a JSON array of input objects. Each object must have exactly the
+    specified input field names as keys. Do NOT include emoji or special
+    Unicode characters in string values.
+    """
+
+    task_description: str = dspy.InputField(desc="Description of the task")
+    input_field_spec: str = dspy.InputField(
+        desc=(
+            "JSON spec of input fields with types and constraints. "
+            'Example: {"message": {"type": "str", "desc": "The support ticket text"}}'
+        )
+    )
+    target_output: str = dspy.InputField(
+        desc=(
+            "The desired output values that the generated inputs should "
+            "naturally produce. Example: {\"urgency\": \"high\", \"sentiment\": \"negative\"}"
+        )
+    )
+    recent_inputs_json: str = dspy.InputField(
+        desc=(
+            "JSON array of the most recent inputs generated. Use these to ensure "
+            "your new inputs are DIFFERENT in topic, wording, and scenario."
+        ),
+        default="[]",
+    )
+    covered_themes: str = dspy.InputField(
+        desc=(
+            "Comma-separated list of themes/values already covered. You MUST "
+            "generate inputs that explore NEW themes not in this list."
+        ),
+        default="",
+    )
+    n_to_generate: int = dspy.InputField(desc="Number of input objects to generate")
+    generated_inputs: str = dspy.OutputField(
+        desc=(
+            "JSON array of input objects. Each object must have exactly the "
+            "specified field names. No emoji. No empty strings. Every entry "
+            "MUST be completely different from all existing inputs in both "
+            "structure and content."
+        )
+    )
+
+
 def _build_signature_generation_signature() -> type[dspy.Signature]:
     """Build a DSPy Signature that generates complete rows using the user's signature.
 
@@ -785,6 +842,151 @@ class AutoData:
 
         return all_inputs[:n]
 
+    def _generate_targeted_inputs(
+        self,
+        n: int,
+        output_combos: list[dict[str, str]],
+        seed_examples: list[dict[str, Any]] | None,
+        description: str,
+        progress: tqdm | None = None,
+    ) -> list[dict[str, Any]]:
+        """Generate inputs targeted to specific output combos.
+
+        For each output combo, generates ``n // len(output_combos)`` inputs
+        that would naturally produce that combo.  Returns complete rows
+        (inputs + outputs) with perfectly balanced output distribution.
+        """
+        import math
+
+        predictor = dspy.Predict(_TargetedInputGenerationSignature)
+        metadata = self._ensure_metadata(seed_examples)
+        input_spec = self._field_spec_json(self.input_fields, metadata)
+        validator = _build_validator(self.input_fields, metadata)
+        max_retries = self.config.max_retries
+
+        per_combo = max(1, math.ceil(n / len(output_combos)))
+        all_rows: list[dict[str, Any]] = []
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        for combo in output_combos:
+            if len(all_rows) >= n:
+                break
+
+            target_json = json.dumps(combo, default=str)
+            combo_needed = min(per_combo, n - len(all_rows))
+            combo_rows: list[dict[str, Any]] = []
+            recent_window: list[dict[str, Any]] = []
+            covered_values: dict[str, set[str]] = {f: set() for f in self.input_fields}
+            consecutive_failures = 0
+            max_total_attempts = max(max_retries * 5, combo_needed)
+
+            with dspy.settings.context(lm=self.data_lm):
+                while len(combo_rows) < combo_needed:
+                    if consecutive_failures >= max_total_attempts:
+                        break
+
+                    chunk_batches = min(
+                        self.config.num_threads,
+                        (combo_needed - len(combo_rows) + 19) // 20,
+                    )
+
+                    recent_json = json.dumps(recent_window[-20:], default=str)
+                    themes_str = ""
+                    parts = []
+                    for f, vals in covered_values.items():
+                        if vals:
+                            parts.append(f"{f}: {', '.join(sorted(vals))}")
+                    themes_str = "; ".join(parts)
+
+                    tasks = []
+                    for _ in range(chunk_batches):
+                        remaining = combo_needed - len(combo_rows)
+                        batch_size = min(20, remaining)
+                        example = dspy.Example(
+                            task_description=description,
+                            input_field_spec=input_spec,
+                            target_output=target_json,
+                            recent_inputs_json=recent_json,
+                            covered_themes=themes_str,
+                            n_to_generate=batch_size,
+                        ).with_inputs(
+                            "task_description",
+                            "input_field_spec",
+                            "target_output",
+                            "recent_inputs_json",
+                            "covered_themes",
+                            "n_to_generate",
+                        )
+                        tasks.append((predictor, example))
+
+                    exec_results = parallel(tasks)
+                    if isinstance(exec_results, tuple):
+                        exec_results = exec_results[0]
+
+                    accepted_this_chunk = 0
+                    for result in exec_results:
+                        if isinstance(result, Exception):
+                            continue
+                        generated = result if isinstance(result, list) else [result]
+                        for item in generated:
+                            if isinstance(item, dspy.Prediction):
+                                try:
+                                    parsed = json.loads(
+                                        _extract_json(item.generated_inputs)
+                                    )
+                                    if not isinstance(parsed, list):
+                                        parsed = [parsed]
+                                except (json.JSONDecodeError, ValueError, TypeError):
+                                    continue
+                            elif isinstance(item, dict):
+                                parsed = [item]
+                            else:
+                                continue
+
+                            for row in parsed:
+                                if not isinstance(row, dict):
+                                    continue
+                                clean_row, errs = _validate_and_sanitize_row(
+                                    row, self.input_fields, metadata
+                                )
+                                if errs:
+                                    continue
+                                val_result = validator.validate(clean_row)
+                                if not val_result.is_valid:
+                                    continue
+
+                                # Assign the target output to the row
+                                complete_row = {**clean_row, **combo}
+                                combo_rows.append(complete_row)
+                                recent_window.append(clean_row)
+                                for f in self.input_fields:
+                                    val = clean_row.get(f)
+                                    if isinstance(val, str) and val.strip():
+                                        covered_values[f].add(val.strip().lower())
+
+                                accepted_this_chunk += 1
+                                consecutive_failures = 0
+                                if progress is not None:
+                                    progress.update(1)
+                                if len(combo_rows) >= combo_needed:
+                                    break
+                            if len(combo_rows) >= combo_needed:
+                                break
+                        if len(combo_rows) >= combo_needed:
+                            break
+
+                    if accepted_this_chunk == 0:
+                        consecutive_failures += 1
+
+            all_rows.extend(combo_rows)
+
+        return all_rows[:n]
+
     def _generate_outputs(
         self,
         inputs: list[dict[str, Any]],
@@ -977,7 +1179,7 @@ class AutoData:
 
                 # Score validated rows using moderate batching (10 per LLM call)
                 if judge is not None and validated:
-                    judge_batch_size = 10
+                    judge_batch_size = 5
                     all_validated = [
                         (idx, inp, co) for idx, inp, co in validated
                     ]
@@ -1326,43 +1528,45 @@ class AutoData:
                         f"Balancing outputs across {len(output_combos)} target combos"
                     )
 
-            pool_n = n
             if output_combos is not None:
-                pool_n = int(n * self.config.oversample_factor)
-                tqdm.write(f"Oversampling: generating {pool_n} rows for balance pool")
-
-            input_bar = tqdm(
-                total=pool_n, desc="Generating inputs", unit="row", leave=True
-            )
-            inputs = self._generate_inputs(
-                pool_n, resolved_seeds, description, input_bar
-            )
-            input_bar.close()
-
-            output_bar = tqdm(
-                total=len(inputs), desc="Generating outputs", unit="row", leave=True
-            )
-            output_writer = None if output_combos is not None else writer
-            outputs, quality_scores = self._generate_outputs(
-                inputs, description, writer=output_writer, progress=output_bar
-            )
-            output_bar.close()
-
-            complete_rows = []
-            row_scores: list[float] = []
-            for i, (inp, out) in enumerate(zip(inputs, outputs)):
-                if out is not None:
-                    complete_rows.append({**inp, **out})
-                    if quality_scores is not None and i < len(quality_scores):
-                        row_scores.append(quality_scores[i])
-
-            if output_combos is not None:
-                if len(complete_rows) > n:
-                    complete_rows, row_scores = self._subsample_balanced(
-                        complete_rows, n, row_scores
-                    )
+                # Targeted generation: generate inputs backwards from target
+                # outputs.  This guarantees balanced distribution and skips
+                # the output generation step entirely.
+                target_bar = tqdm(
+                    total=n, desc="Generating targeted rows", unit="row", leave=True
+                )
+                complete_rows = self._generate_targeted_inputs(
+                    n, output_combos, resolved_seeds, description, target_bar
+                )
+                target_bar.close()
+                row_scores = []
                 writer.truncate()
                 writer.write_rows(complete_rows)
+            else:
+                # Standard flow: generate inputs then outputs
+                input_bar = tqdm(
+                    total=n, desc="Generating inputs", unit="row", leave=True
+                )
+                inputs = self._generate_inputs(
+                    n, resolved_seeds, description, input_bar
+                )
+                input_bar.close()
+
+                output_bar = tqdm(
+                    total=len(inputs), desc="Generating outputs", unit="row", leave=True
+                )
+                outputs, quality_scores = self._generate_outputs(
+                    inputs, description, writer=writer, progress=output_bar
+                )
+                output_bar.close()
+
+                complete_rows = []
+                row_scores: list[float] = []
+                for i, (inp, out) in enumerate(zip(inputs, outputs)):
+                    if out is not None:
+                        complete_rows.append({**inp, **out})
+                        if quality_scores is not None and i < len(quality_scores):
+                            row_scores.append(quality_scores[i])
 
         n_written = writer.row_count()
         elapsed = time.time() - start_time
