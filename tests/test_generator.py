@@ -1333,3 +1333,299 @@ class TestSubsampleBalanced:
         for row, sc in zip(result_rows, result_scores):
             idx = int(row["message"][1])
             assert sc == scores[idx]
+
+
+# ---------------------------------------------------------------------------
+# Signature generation mode tests
+# ---------------------------------------------------------------------------
+
+
+class TestSignatureGenerationMode:
+    """Tests for generation_mode='signature'."""
+
+    def test_config_generation_mode_validation(self) -> None:
+        """AutoDataConfig rejects invalid generation_mode values."""
+        with pytest.raises(ValueError, match="generation_mode must be one of"):
+            AutoDataConfig(generation_mode="invalid")
+
+    def test_config_generation_mode_default(self) -> None:
+        """AutoDataConfig defaults to generation_mode='split'."""
+        config = AutoDataConfig()
+        assert config.generation_mode == "split"
+
+    def test_config_generation_mode_signature(self) -> None:
+        """AutoDataConfig accepts generation_mode='signature'."""
+        config = AutoDataConfig(generation_mode="signature")
+        assert config.generation_mode == "signature"
+
+    def test_build_signature_generation_signature(self) -> None:
+        """_build_signature_generation_signature returns a valid DSPy Signature class."""
+        from dspy_auto_gepa.generator import _build_signature_generation_signature
+
+        sig_cls = _build_signature_generation_signature()
+        assert issubclass(sig_cls, dspy.Signature)
+
+        # Check that the signature has the expected input/output fields
+        fields = getattr(sig_cls, "fields", {})
+        assert "task_description" in fields
+        assert "field_spec" in fields
+        assert "recent_rows_json" in fields
+        assert "covered_themes" in fields
+        assert "n_to_generate" in fields
+        assert "generated_rows" in fields
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_mocked(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode returns complete rows with all fields."""
+        mock_predictor = MagicMock()
+        mock_predictor.return_value = dspy.Prediction(
+            generated_rows=json.dumps(
+                [
+                    {
+                        "message": "server is down",
+                        "urgency": "high",
+                        "sentiment": "negative",
+                    },
+                    {
+                        "message": "thanks for help",
+                        "urgency": "low",
+                        "sentiment": "positive",
+                    },
+                ]
+            )
+        )
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=2, generation_mode="signature"),
+        )
+
+        rows, scores = gen._generate_signature_mode(2, None, "Classify tickets")
+
+        assert len(rows) == 2
+        for row in rows:
+            assert "message" in row
+            assert "urgency" in row
+            assert "sentiment" in row
+        assert rows[0]["urgency"] == "high"
+        assert rows[1]["urgency"] == "low"
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_respects_n(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode returns exactly n rows."""
+        mock_predictor = MagicMock()
+        mock_predictor.return_value = dspy.Prediction(
+            generated_rows=json.dumps(
+                [
+                    {"message": f"msg{i}", "urgency": "low", "sentiment": "neutral"}
+                    for i in range(5)
+                ]
+            )
+        )
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=3, generation_mode="signature"),
+        )
+
+        rows, _ = gen._generate_signature_mode(3, None, "Classify tickets")
+        assert len(rows) == 3
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_retries_on_bad_json(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode retries when LLM returns invalid JSON."""
+        mock_predictor = MagicMock()
+        mock_predictor.side_effect = [
+            dspy.Prediction(generated_rows="not valid json"),
+            dspy.Prediction(
+                generated_rows=json.dumps(
+                    [{"message": "recovered", "urgency": "low", "sentiment": "neutral"}]
+                )
+            ),
+        ]
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1, generation_mode="signature"),
+        )
+
+        rows, _ = gen._generate_signature_mode(1, None, "Classify tickets")
+        assert len(rows) == 1
+        assert rows[0]["message"] == "recovered"
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_with_seeds(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode passes seed examples for diversity reference."""
+        mock_predictor = MagicMock()
+        mock_predictor.return_value = dspy.Prediction(
+            generated_rows=json.dumps(
+                [{"message": "generated", "urgency": "low", "sentiment": "neutral"}]
+            )
+        )
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, executed_tasks = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1, generation_mode="signature"),
+        )
+
+        seeds = [{"message": "seed1", "urgency": "low", "sentiment": "neutral"}]
+        rows, _ = gen._generate_signature_mode(1, seeds, "Classify tickets")
+
+        assert len(rows) == 1
+        assert len(executed_tasks) > 0
+        _, example = executed_tasks[0]
+        assert "seed1" in example.recent_rows_json
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_full_flow_signature_mode(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """generate() with signature mode returns correct GenerationResult."""
+        mock_predictor = MagicMock()
+        mock_predictor.return_value = dspy.Prediction(
+            generated_rows=json.dumps(
+                [
+                    {
+                        "message": "server down",
+                        "urgency": "high",
+                        "sentiment": "negative",
+                    },
+                    {
+                        "message": "thanks",
+                        "urgency": "low",
+                        "sentiment": "positive",
+                    },
+                ]
+            )
+        )
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        output_path = tmp_path / "output.jsonl"
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=2, generation_mode="signature"),
+        )
+
+        result = gen.generate(n=2, output_path=output_path, force=True)
+
+        assert isinstance(result, GenerationResult)
+        assert result.n_produced == 2
+        assert result.n_requested == 2
+        assert len(result.rows) == 2
+        for row in result.rows:
+            assert "message" in row
+            assert "urgency" in row
+            assert "sentiment" in row
+        assert output_path.exists()
+
+    def test_generate_signature_mode_with_react_style_signature(self) -> None:
+        """Signature mode works with multi-output signatures like ReAct."""
+
+        class ReActSignature(dspy.Signature):
+            """Answer questions using step-by-step reasoning."""
+
+            question: str = dspy.InputField()
+            thought: str = dspy.OutputField()
+            action: str = dspy.OutputField()
+            observation: str = dspy.OutputField()
+            answer: str = dspy.OutputField()
+
+        module = MagicMock()
+        module.signature = ReActSignature
+        module.named_predictors = lambda: []
+
+        gen = AutoData(
+            module=module,
+            data_lm=MagicMock(),
+            description="Answer questions with reasoning",
+            config=_make_autodata_config(generation_mode="signature"),
+        )
+
+        assert gen.input_fields == ["question"]
+        assert "thought" in gen.output_fields
+        assert "action" in gen.output_fields
+        assert "observation" in gen.output_fields
+        assert "answer" in gen.output_fields
+
+    @patch("dspy_auto_gepa.generator.dspy.Parallel")
+    @patch("dspy_auto_gepa.generator.dspy.Predict")
+    def test_generate_signature_mode_rejects_empty_fields(
+        self, mock_predict_cls: MagicMock, mock_parallel_cls: MagicMock
+    ) -> None:
+        """_generate_signature_mode rejects rows with empty required fields."""
+        mock_predictor = MagicMock()
+        mock_predictor.side_effect = [
+            dspy.Prediction(
+                generated_rows=json.dumps(
+                    [{"message": "", "urgency": "high", "sentiment": "negative"}]
+                )
+            ),
+            dspy.Prediction(
+                generated_rows=json.dumps(
+                    [
+                        {
+                            "message": "valid message",
+                            "urgency": "low",
+                            "sentiment": "neutral",
+                        }
+                    ]
+                )
+            ),
+        ]
+        mock_predict_cls.return_value = mock_predictor
+
+        parallel_mock, _ = _make_sync_parallel_mock()
+        mock_parallel_cls.side_effect = parallel_mock
+
+        gen = AutoData(
+            module=DummyModule(),
+            data_lm=MagicMock(),
+            description="Classify tickets",
+            config=_make_autodata_config(n=1, generation_mode="signature"),
+        )
+
+        rows, _ = gen._generate_signature_mode(1, None, "Classify tickets")
+        assert len(rows) == 1
+        assert rows[0]["message"] == "valid message"
