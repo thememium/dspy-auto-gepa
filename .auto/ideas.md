@@ -1,0 +1,2 @@
+- Re-batch failed output generations through smaller batches before falling back to single-row calls; likely more helpful for real APIs than the current mocked benchmark.
+- Consider optional checkpointed/buffered writer durability modes (e.g. fsync every N rows) if users want higher throughput and can tolerate losing the last small batch on crash.

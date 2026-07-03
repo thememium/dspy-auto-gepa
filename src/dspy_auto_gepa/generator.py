@@ -173,8 +173,30 @@ class StreamingDatasetWriter:
         self._rows_written += 1
 
     def write_rows(self, rows: list[dict[str, Any]]) -> None:
-        for row in rows:
-            self.write_row(row)
+        if not rows:
+            return
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._format == "jsonl":
+            with open(self._path, "a", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        elif self._format == "csv":
+            pd.DataFrame(rows).to_csv(
+                self._path,
+                mode="a",
+                header=not self._header_written,
+                index=False,
+            )
+            self._header_written = True
+        elif self._format == "parquet":
+            self._all_rows.extend(rows)
+            pd.DataFrame(self._all_rows).to_parquet(self._path, index=False)
+
+        self._rows_written += len(rows)
 
     def flush(self) -> None:
         pass
@@ -1022,6 +1044,7 @@ class AutoData:
                         else:
                             continue
 
+                        rows_to_write: list[dict[str, Any]] = []
                         for row in parsed:
                             if not isinstance(row, dict):
                                 continue
@@ -1056,15 +1079,16 @@ class AutoData:
                                 if isinstance(val, str) and val.strip():
                                     covered_values[f].add(val.strip().lower())
 
-                            if writer is not None:
-                                writer.write_row(clean_row)
-
+                            rows_to_write.append(clean_row)
                             accepted_this_chunk += 1
                             consecutive_failures = 0
                             if progress is not None:
                                 progress.update(1)
                             if len(all_rows) >= n:
                                 break
+
+                        if writer is not None and rows_to_write:
+                            writer.write_rows(rows_to_write)
                         if len(all_rows) >= n:
                             break
                     if len(all_rows) >= n:
@@ -1210,8 +1234,7 @@ class AutoData:
                         complete_rows, n, row_scores
                     )
                 writer.truncate()
-                for row in complete_rows:
-                    writer.write_row(row)
+                writer.write_rows(complete_rows)
 
         n_written = writer.row_count()
         elapsed = time.time() - start_time
