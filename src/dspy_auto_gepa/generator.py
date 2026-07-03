@@ -680,7 +680,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
-        request_row_cap = 30
+        request_row_cap = 40
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_inputs) < n:
@@ -688,7 +688,7 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self._parallel_request_budget(),
+                    self.config.num_threads,
                     (n - len(all_inputs) + request_row_cap - 1) // request_row_cap,
                 )
 
@@ -1102,7 +1102,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
-        request_row_cap = 30
+        request_row_cap = 40
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_rows) < n:
@@ -1110,7 +1110,7 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self._parallel_request_budget(),
+                    self.config.num_threads,
                     (n - len(all_rows) + request_row_cap - 1) // request_row_cap,
                 )
 
