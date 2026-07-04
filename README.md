@@ -23,6 +23,7 @@
     <li><a href="#about">About</a></li>
     <li><a href="#quick-start">Quick Start</a></li>
     <li><a href="#usage">Usage</a></li>
+    <li><a href="#autodata">AutoData</a></li>
     <li><a href="#api">API</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -192,6 +193,122 @@ auto.promote(
     destination=auto._run_dir / "optimized_ticket_classifier.json",
 )
 ```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- AUTODATA -->
+
+<a name="autodata"></a>
+
+## AutoData
+
+AutoData is a built-in synthetic data generator that creates training datasets using LLMs. It reads your module's `dspy.Signature` to understand the task, then generates realistic input/output rows — either from scratch or seeded with a few examples.
+
+Two generation modes cover different use cases:
+
+- **`"split"`** (default) — generates inputs first, then outputs separately. Works well for classification-style tasks where outputs are constrained (e.g., enum labels).
+- **`"signature"`** — generates complete rows in one shot using the full signature. Better for complex, tightly-coupled outputs like ReAct reasoning traces.
+
+### Quick example
+
+```python
+import dspy
+from dspy_auto_gepa import AutoData, AutoDataConfig
+
+lm = dspy.LM("openrouter/openai/gpt-oss-120b")
+dspy.configure(lm=lm)
+
+class TicketSignature(dspy.Signature):
+    """Classify support tickets by urgency and sentiment."""
+    message: str = dspy.InputField()
+    urgency: str = dspy.OutputField()
+    sentiment: str = dspy.OutputField()
+
+program = dspy.ChainOfThought(TicketSignature)
+
+seed_rows = [
+    {"message": "The server room AC is out and equipment is overheating.", "urgency": "high", "sentiment": "negative"},
+    {"message": "Can someone clean conference room B next week?", "urgency": "low", "sentiment": "neutral"},
+    {"message": "Thanks for fixing the VPN, works perfectly now!", "urgency": "medium", "sentiment": "positive"},
+]
+
+config = AutoDataConfig(
+    n=100,
+    generation_mode="split",
+    seed_examples=seed_rows,
+    output_path=".auto_gepa/TicketSignature/generated/rows.jsonl",
+)
+
+gen = AutoData(module=program, data_lm=lm, config=config, name="TicketSignature")
+result = gen.generate()
+
+print(f"Generated {result.n_produced} of {result.n_requested} rows")
+print(f"Time: {result.generation_time_seconds:.1f}s")
+for row in result.rows[:3]:
+    print(row)
+```
+
+### Feeding generated data into AutoGEPA
+
+The typical workflow is: generate data with AutoData, then pass the rows straight into AutoGEPA for optimization:
+
+```python
+from dspy_auto_gepa import AutoData, AutoDataConfig, AutoGEPA
+
+# Step 1: Generate synthetic data
+gen = AutoData(module=program, data_lm=lm, config=config, name="TicketSignature")
+result = gen.generate()
+rows = result.rows
+
+# Step 2: Optimize with AutoGEPA
+auto = AutoGEPA(
+    name="TicketSignature",
+    rows=rows,
+    module=program,
+    metric_lm=lm,
+    reflection_lm=lm,
+)
+results = auto.run()
+```
+
+### Loading seeds from files
+
+Use `from_csv` or `from_json` to bootstrap generation from existing data:
+
+```python
+gen = AutoData.from_csv("seeds.csv", module=program, data_lm=lm)
+result = gen.generate(n=200)
+```
+
+### AutoDataConfig reference
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `n` | `int` | `100` | Number of rows to generate |
+| `generation_mode` | `Literal["split", "signature"]` | `"split"` | How to generate rows |
+| `seed_examples` | `list[dict] \| None` | `None` | Optional seed rows to guide generation |
+| `output_path` | `str \| Path \| None` | `None` | Where to save (`.jsonl`, `.csv`, `.parquet`) |
+| `diversity_categories` | `str` | `""` | Comma-separated topics for diversity (signature mode) |
+| `data_lm` | `dspy.LM \| None` | `None` | LM for generation. Falls back to `dspy.settings.lm` |
+| `judge_lm` | `dspy.LM \| None` | `None` | LM for quality scoring. Falls back to `data_lm` |
+| `judge_enabled` | `bool` | `True` | Score generated rows with an LLM judge |
+| `balance_outputs` | `bool` | `True` | Balance categorical output distribution |
+| `num_threads` | `int` | `16` | Parallel generation threads |
+| `seed` | `int` | `42` | Random seed |
+| `force` | `bool` | `False` | Overwrite existing output file |
+
+### GenerationResult
+
+`gen.generate()` returns a `GenerationResult` with:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `rows` | `list[dict]` | Generated rows |
+| `n_requested` | `int` | How many were requested |
+| `n_produced` | `int` | How many were actually generated |
+| `n_failed` | `int` | `n_requested - n_produced` |
+| `generation_time_seconds` | `float` | Wall-clock time |
+| `quality_scores` | `list[float] \| None` | Per-row judge scores (if `judge_enabled`) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
