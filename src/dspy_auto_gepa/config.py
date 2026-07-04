@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -35,3 +37,57 @@ class AutoGEPAConfig:
             self.metric_generator_signature = MetricSpecGenerator
         if self.metric_generator_module is None:
             self.metric_generator_module = dspy.RLM
+
+
+@dataclass
+class AutoDataConfig:
+    """Configuration for the automatic data generation pipeline.
+
+    Attributes
+    ----------
+    generation_mode :
+        How to generate data rows.
+
+        * ``"split"`` — two-phase: generate inputs first, then outputs
+          separately.  Works well for simple classification-style tasks.
+        * ``"signature"`` — single-phase: generate complete rows
+          (inputs + outputs) in one shot using the module's actual
+          Signature.  Better for complex, tightly-coupled outputs such as
+          ReAct reasoning traces or RLM explorations.
+    """
+
+    n: int = 100
+    seed: int = 42
+    max_retries: int = 8
+    num_threads: int = 16
+    chunk_size: int = 10
+    max_inflight_requests: int | None = 4
+    diversity_threshold: float = 0.3
+    judge_enabled: bool = True
+    validators_enabled: bool = True
+    diversity_enabled: bool = True
+    rejection_sampling_enabled: bool = True
+    data_lm: dspy.LM | None = None
+    judge_lm: dspy.LM | None = None
+    balance_outputs: bool = True
+    balance_tolerance: float = 0.15
+    oversample_factor: float = 2.0
+    generation_mode: Literal["split", "signature"] = "split"
+    diversity_categories: str = ""
+    seed_examples: list[dict[str, Any]] | None = None
+    output_path: str | Path | None = None
+    force: bool = False
+
+    def __post_init__(self) -> None:
+        if self.n <= 0:
+            raise ValueError("n must be positive")
+        if self.max_retries <= 0:
+            raise ValueError("max_retries must be positive")
+        if self.chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if self.max_inflight_requests is not None and self.max_inflight_requests <= 0:
+            raise ValueError("max_inflight_requests must be positive when set")
+        if not (0.0 <= self.diversity_threshold <= 1.0):
+            raise ValueError("diversity_threshold must be between 0.0 and 1.0")
+        if self.generation_mode not in ("split", "signature"):
+            raise ValueError("generation_mode must be one of: 'split', 'signature'")

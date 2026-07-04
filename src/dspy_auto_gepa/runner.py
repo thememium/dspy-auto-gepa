@@ -6,13 +6,7 @@ from pydantic import BaseModel
 
 from .artifacts import load_metric
 from .config import AutoGEPAConfig
-from .data import (
-    _apply_mapping,
-    _resolve_fields,
-    _to_dicts,
-    split_examples,
-    to_examples,
-)
+from .data import _to_dicts, apply_mapping, resolve_fields, split_examples, to_examples
 from .metric_builder import generate_metric_file
 
 
@@ -50,6 +44,37 @@ class RunResult(BaseModel):
         )
 
 
+class GenerationResult(BaseModel):
+    rows: list[dict]
+    n_requested: int
+    n_produced: int
+    n_failed: int
+    seed_used: int
+    schema_hash: str | None = None
+    generation_time_seconds: float
+    quality_scores: list[float] | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"GenerationResult(n_produced={self.n_produced}, "
+            f"n_failed={self.n_failed}, "
+            f"generation_time_seconds={self.generation_time_seconds:.2f})"
+        )
+
+
+class GenerationFailed(Exception):
+    def __init__(self, n_requested: int, n_produced: int):
+        self.n_requested = n_requested
+        self.n_produced = n_produced
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return (
+            f"Generation failed: produced {self.n_produced} of "
+            f"{self.n_requested} requested rows"
+        )
+
+
 class AutoGEPA:
     def __init__(
         self,
@@ -70,6 +95,8 @@ class AutoGEPA:
         metric_generator_signature: Any = None,
         metric_generator_module: Any = None,
         metric_generator_verbose: bool = True,
+        data_lm: dspy.LM | None = None,
+        judge_lm: dspy.LM | None = None,
     ):
         self.rows = rows
         self.module = module
@@ -89,6 +116,8 @@ class AutoGEPA:
         )
         self._raw_input_fields = input_fields
         self._raw_output_fields = output_fields
+        self._data_lm = data_lm
+        self._judge_lm = judge_lm
         self.config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir: Path | None = None
         self._metric_file: Path | None = None
@@ -143,7 +172,7 @@ class AutoGEPA:
             rows, module, name, metric
         )
 
-        resolved_in, resolved_out, mapping = _resolve_fields(
+        resolved_in, resolved_out, mapping = resolve_fields(
             task_module,
             set(task_rows[0].keys()) if task_rows else set(),
             self._raw_input_fields,
@@ -151,7 +180,7 @@ class AutoGEPA:
         )
 
         if mapping:
-            task_rows = _apply_mapping(task_rows, mapping)
+            task_rows = apply_mapping(task_rows, mapping)
 
         return task_rows, task_module, task_name, task_metric, resolved_in, resolved_out
 
@@ -393,3 +422,52 @@ class AutoGEPA:
         dest.parent.mkdir(parents=True, exist_ok=True)
         optimized_module.save(str(dest))
         return dest
+
+    def generate(
+        self,
+        n: int = 100,
+        data_lm: dspy.LM | None = None,
+        seed_examples: Any | None = None,
+        schema: Any | None = None,
+        force: bool = False,
+        output_path: str | Path | None = None,
+    ) -> list[dict]:
+        """Generate synthetic training data using AutoData.
+
+        Args:
+            n: Number of rows to generate.
+            data_lm: LM for data generation. Defaults to constructor's
+                data_lm or metric_lm.
+            seed_examples: Seed data — list[dict], DataFrame, file path
+                (.jsonl, .json, .csv, .parquet), or any object _to_dicts supports.
+            schema: Optional Pydantic model for output schema override.
+            force: If True, regenerate even if output exists.
+            output_path: Output file path. Format auto-detected from extension.
+
+        Returns:
+            List of generated row dicts.
+        """
+        from .config import AutoDataConfig
+        from .generator import AutoData
+
+        resolved_lm = data_lm or self._data_lm or self.config.metric_lm
+
+        if self.module is None:
+            raise ValueError("module must be provided to generate data")
+
+        config = AutoDataConfig(
+            n=n,
+            seed_examples=seed_examples,
+            force=force,
+            output_path=output_path,
+        )
+
+        gen = AutoData(
+            module=self.module,
+            data_lm=resolved_lm,
+            schema=schema,
+            name=self.name,
+            config=config,
+        )
+        result = gen.generate()
+        return result.rows

@@ -5,14 +5,7 @@ description = "Thin orchestration package around DSPy's GEPA optimizer"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Edward Boswell", email = "thememium@gmail.com" }]
-keywords = [
-  "dspy",
-  "ai",
-  "gepa",
-  "optimizer",
-  "orchestration",
-  "optimization",
-]
+keywords = ["dspy", "ai", "gepa", "optimizer", "orchestration", "optimization"]
 classifiers = [
   "Operating System :: OS Independent",
   "Development Status :: 3 - Alpha",
@@ -22,9 +15,11 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "dspy>=3.2.1",
-    "pandas>=3.0.3",
-    "pydantic>=2.13.4",
+  "dspy>=3.2.1",
+  "pandas>=3.0.3",
+  "pyarrow>=24.0.0",
+  "pydantic>=2.13.4",
+  "tqdm>=4.67.3",
 ]
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
@@ -46,32 +41,37 @@ include = ["dspy_auto_gepa*"]
 
 [dependency-groups]
 dev = [
+  "botocore>=1.43.39",
   "deptry>=0.25.1",
   "isort>=8.0.1",
   "poethepoet>=0.46.0",
   "pytest>=9.0.3",
+  "pytest-cov>=7.1.0",
   "ruff>=0.15.13",
   "ty>=0.0.38",
-  "usechange>=0.1.28",
+  "usechange>=0.1.43",
 ]
 
 [tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:.*prefix.*:DeprecationWarning:dspy.*",
-]
+filterwarnings = ["ignore:.*prefix.*:DeprecationWarning:dspy.*"]
 
 [tool.deptry]
 known_first_party = ["dspy_auto_gepa"]
-per_rule_ignores = { DEP002 = ["pandas"] }
+per_rule_ignores = { DEP002 = ["pandas", "pyarrow"] }
 
 [tool.poe.tasks]
-example = "uv run example.py"
+example-full = "uv run examples/auto_combined.py"
+example-data-split = "uv run examples/data_split.py"
+example-data-signature = "uv run examples/data_signature.py"
+example-basic = "uv run examples/basic.py"
 clean-full = "sh -c 'uv run isort . && uv run ruff check . --fix && uv run ruff format . && uv run deptry . && uv run ty check'"
 clean = "sh -c 'uv run isort . && uv run ruff format .'"
 test = "uv run pytest tests/ -v"
+test-cov = "uv run pytest tests/ -v --cov=dspy_auto_gepa --cov-report=term-missing"
+test-e2e = "uv run pytest tests/ -v --run-e2e"
 sort = "uv run isort ."
 lint = "uv run ruff check ."
 format = "uv run ruff format ."
-deptry = "uv deptry ."
+deptry = "uv run deptry ."
 typecheck = "uv run ty check"
 release = "uv run usechange release"

@@ -1,10 +1,164 @@
+import json
 import random
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import dspy
 
 
+@dataclass
+class FieldMetadata:
+    name: str
+    python_type: type
+    description: str
+    is_input: bool
+    allowed_values: list[str] | None = None
+
+
+@dataclass
+class SignatureMetadata:
+    fields: list[FieldMetadata]
+    input_fields: list[str] = field(default_factory=list)
+    output_fields: list[str] = field(default_factory=list)
+
+    def get(self, name: str) -> FieldMetadata | None:
+        for f in self.fields:
+            if f.name == name:
+                return f
+        return None
+
+    def to_prompt_spec(self) -> str:
+        parts: list[str] = []
+        for f in self.fields:
+            entry: dict[str, Any] = {"type": f.python_type.__name__}
+            if f.description:
+                entry["desc"] = f.description
+            if f.allowed_values:
+                entry["allowed"] = f.allowed_values
+            parts.append(f'"{f.name}": {json.dumps(entry)}')
+        return "{" + ", ".join(parts) + "}"
+
+
+def _infer_allowed_values(
+    field_name: str,
+    seed_examples: list[dict[str, Any]] | None,
+    max_cardinality: int = 10,
+) -> list[str] | None:
+    if not seed_examples:
+        return None
+    distinct: set[str] = set()
+    for row in seed_examples:
+        val = row.get(field_name)
+        if isinstance(val, str) and val.strip():
+            distinct.add(val.strip().lower())
+    if 1 < len(distinct) <= max_cardinality:
+        return sorted(distinct)
+    return None
+
+
+def extract_signature_metadata(
+    sig: type[dspy.Signature],
+    seed_examples: list[dict[str, Any]] | None = None,
+) -> SignatureMetadata:
+    fields_meta: list[FieldMetadata] = []
+    input_names: list[str] = []
+    output_names: list[str] = []
+
+    raw_fields = getattr(sig, "fields", None)
+    if raw_fields is None:
+        return SignatureMetadata(fields=[])
+
+    for name, field_info in raw_fields.items():
+        json_extra = getattr(field_info, "json_schema_extra", {}) or {}
+        field_type_str = json_extra.get("__dspy_field_type")
+        is_input = field_type_str == "input" or getattr(field_info, "is_input", False)
+        is_output = field_type_str == "output" or getattr(
+            field_info, "is_output", False
+        )
+
+        if not is_input and not is_output:
+            continue
+
+        annotation = getattr(field_info, "annotation", str) or str
+        desc = getattr(field_info, "description", "") or ""
+
+        allowed = _infer_allowed_values(name, seed_examples) if not is_input else None
+
+        meta = FieldMetadata(
+            name=name,
+            python_type=annotation if isinstance(annotation, type) else str,
+            description=desc,
+            is_input=is_input,
+            allowed_values=allowed,
+        )
+        fields_meta.append(meta)
+
+        if is_input:
+            input_names.append(name)
+        else:
+            output_names.append(name)
+
+    return SignatureMetadata(
+        fields=fields_meta,
+        input_fields=input_names,
+        output_fields=output_names,
+    )
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _read_json_array(path: Path) -> list[dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "rows" in data:
+        data = data["rows"]
+    if not isinstance(data, list):
+        raise ValueError(
+            f"JSON file must contain an array of objects, got {type(data).__name__}"
+        )
+    return data
+
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    import pandas as pd
+
+    return pd.read_csv(path).to_dict(orient="records")
+
+
+def _read_parquet(path: Path) -> list[dict[str, Any]]:
+    import pandas as pd
+
+    return pd.read_parquet(path).to_dict(orient="records")
+
+
 def _to_dicts(obj: Any) -> list[dict[str, Any]]:
+    if isinstance(obj, (str, Path)):
+        path = Path(obj)
+        if not path.exists():
+            raise FileNotFoundError(f"Dataset file not found: {path}")
+        suffix = path.suffix.lower()
+        if suffix == ".jsonl":
+            return _read_jsonl(path)
+        if suffix == ".json":
+            return _read_json_array(path)
+        if suffix == ".csv":
+            return _read_csv(path)
+        if suffix in (".parquet", ".pq"):
+            return _read_parquet(path)
+        raise ValueError(
+            f"Unsupported file extension '{suffix}' for dataset file. "
+            "Use .jsonl, .json, .csv, .parquet, or .pq"
+        )
+
     if isinstance(obj, list):
         return obj
 
@@ -32,6 +186,7 @@ def _to_dicts(obj: Any) -> list[dict[str, Any]]:
     raise TypeError(
         f"Cannot convert {type(obj).__name__} to list of dicts. "
         "Expected: list[dict], pandas DataFrame, polars DataFrame/LazyFrame, "
+        "file path (str/Path to .jsonl, .json, .csv, .parquet), "
         "or any object with .to_dicts() or .to_pandas()."
     )
 
@@ -60,7 +215,7 @@ def _extract_fields_from_signature(
     return input_fields, output_fields
 
 
-def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
+def infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]]:
     sig = getattr(module, "signature", None)
 
     # Fallback for wrappers like ChainOfThought that store the signature on an
@@ -119,13 +274,13 @@ def _infer_fields_from_module(module: dspy.Module) -> tuple[list[str], list[str]
     return input_fields, output_fields
 
 
-def _resolve_fields(
+def resolve_fields(
     module: dspy.Module,
     row_keys: set[str],
     input_fields: list[str] | dict[str, str] | None,
     output_fields: list[str] | dict[str, str] | None,
 ) -> tuple[list[str], list[str], dict[str, str]]:
-    sig_in, sig_out = _infer_fields_from_module(module)
+    sig_in, sig_out = infer_fields_from_module(module)
     all_sig = set(sig_in + sig_out)
 
     mapping: dict[str, str] = {}
@@ -172,7 +327,7 @@ def _resolve_fields(
     return resolved_input, resolved_output, mapping
 
 
-def _apply_mapping(
+def apply_mapping(
     rows: list[dict[str, Any]], mapping: dict[str, str]
 ) -> list[dict[str, Any]]:
     if not mapping:
