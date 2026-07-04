@@ -173,8 +173,30 @@ class StreamingDatasetWriter:
         self._rows_written += 1
 
     def write_rows(self, rows: list[dict[str, Any]]) -> None:
-        for row in rows:
-            self.write_row(row)
+        if not rows:
+            return
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._format == "jsonl":
+            with open(self._path, "a", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        elif self._format == "csv":
+            pd.DataFrame(rows).to_csv(
+                self._path,
+                mode="a",
+                header=not self._header_written,
+                index=False,
+            )
+            self._header_written = True
+        elif self._format == "parquet":
+            self._all_rows.extend(rows)
+            pd.DataFrame(self._all_rows).to_parquet(self._path, index=False)
+
+        self._rows_written += len(rows)
 
     def flush(self) -> None:
         pass
@@ -328,6 +350,9 @@ class _OutputGenerationSignature(dspy.Signature):
     Return a JSON object with exactly the specified output field names as keys.
     Values MUST match the allowed values listed in the field spec.
     Do NOT include emoji or special Unicode characters.
+
+    When the input could reasonably fit multiple allowed values, prefer the
+    less common one to maintain variety in the dataset.
     """
 
     task_description: str = dspy.InputField(desc="Description of the task")
@@ -342,6 +367,63 @@ class _OutputGenerationSignature(dspy.Signature):
         desc=(
             "JSON object with exactly the specified output field names. "
             "Values must be one of the allowed values if specified."
+        )
+    )
+
+
+class _TargetedInputGenerationSignature(dspy.Signature):
+    """Generate realistic input data that would produce a specific output.
+
+    You are given the DESIRED output values. Generate input data that would
+    naturally and correctly produce those exact output values when classified.
+
+    CRITICAL: Every generated input MUST be completely unique. Do NOT repeat,
+    closely paraphrase, or slightly modify any existing input. Each new input
+    must cover a different scenario, use different wording, and represent a
+    distinct real-world case.
+
+    The generated inputs must be realistic and clearly lead to the specified
+    output values — do NOT generate ambiguous inputs that could go either way.
+
+    Return a JSON array of input objects. Each object must have exactly the
+    specified input field names as keys. Do NOT include emoji or special
+    Unicode characters in string values.
+    """
+
+    task_description: str = dspy.InputField(desc="Description of the task")
+    input_field_spec: str = dspy.InputField(
+        desc=(
+            "JSON spec of input fields with types and constraints. "
+            'Example: {"message": {"type": "str", "desc": "The support ticket text"}}'
+        )
+    )
+    target_output: str = dspy.InputField(
+        desc=(
+            "The desired output values that the generated inputs should "
+            "naturally produce. Example: {\"urgency\": \"high\", \"sentiment\": \"negative\"}"
+        )
+    )
+    recent_inputs_json: str = dspy.InputField(
+        desc=(
+            "JSON array of the most recent inputs generated. Use these to ensure "
+            "your new inputs are DIFFERENT in topic, wording, and scenario."
+        ),
+        default="[]",
+    )
+    covered_themes: str = dspy.InputField(
+        desc=(
+            "Comma-separated list of themes/values already covered. You MUST "
+            "generate inputs that explore NEW themes not in this list."
+        ),
+        default="",
+    )
+    n_to_generate: int = dspy.InputField(desc="Number of input objects to generate")
+    generated_inputs: str = dspy.OutputField(
+        desc=(
+            "JSON array of input objects. Each object must have exactly the "
+            "specified field names. No emoji. No empty strings. Every entry "
+            "MUST be completely different from all existing inputs in both "
+            "structure and content."
         )
     )
 
@@ -436,6 +518,9 @@ def _build_batch_output_signature(output_model: type) -> type[dspy.Signature]:
 
         Return one output object per input, in the SAME ORDER as the inputs
         array.  Each object must match the schema exactly.
+
+        When an input could reasonably fit multiple allowed values, prefer
+        the less common one to maintain variety in the dataset.
         """
 
         task_description: str = dspy.InputField(desc="Description of the task")
@@ -480,6 +565,24 @@ def _compute_output_combos(
     keys = list(categorical.keys())
     value_lists = [categorical[k] for k in keys]
     return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
+
+
+def _canonicalize_for_fingerprint(value: Any) -> str:
+    if value is None:
+        return "__none__"
+    if isinstance(value, str):
+        return sanitize_string(value).lower()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True, default=str)
+    if isinstance(value, (list, tuple)):
+        return json.dumps(list(value), sort_keys=True, default=str)
+    if hasattr(value, "model_dump"):
+        return json.dumps(value.model_dump(), sort_keys=True, default=str)
+    if hasattr(value, "dict"):
+        return json.dumps(value.dict(), sort_keys=True, default=str)
+    return str(value)
 
 
 class AutoData:
@@ -560,6 +663,23 @@ class AutoData:
             spec[name] = entry
         return json.dumps(spec)
 
+    def _parallel_request_budget(self) -> int:
+        budget = min(self.config.chunk_size, self.config.num_threads)
+        if self.config.max_inflight_requests is not None:
+            budget = min(budget, self.config.max_inflight_requests)
+        return max(1, budget)
+
+    def _row_fingerprint(self, row: dict[str, Any], field_names: list[str]) -> str:
+        parts = []
+        for key in sorted(field_names):
+            parts.append(f"{key}={_canonicalize_for_fingerprint(row.get(key))}")
+        return "|".join(parts)
+
+    def _fingerprint_set(
+        self, rows: list[dict[str, Any]], field_names: list[str]
+    ) -> set[str]:
+        return {self._row_fingerprint(row, field_names) for row in rows}
+
     def _generate_inputs(
         self,
         n: int,
@@ -575,6 +695,7 @@ class AutoData:
         validator = _build_validator(self.input_fields, metadata)
 
         all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        existing_fingerprints = self._fingerprint_set(all_existing, self.input_fields)
         recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
         covered_values: dict[str, set[str]] = {f: set() for f in self.input_fields}
         for row in all_existing:
@@ -583,33 +704,8 @@ class AutoData:
                 if isinstance(val, str) and val.strip():
                     covered_values[f].add(val.strip().lower())
 
-        def _canonicalize(value: Any) -> str:
-            if value is None:
-                return "__none__"
-            if isinstance(value, str):
-                return sanitize_string(value).lower()
-            if isinstance(value, (int, float, bool)):
-                return str(value)
-            if isinstance(value, dict):
-                return json.dumps(value, sort_keys=True, default=str)
-            if isinstance(value, (list, tuple)):
-                return json.dumps(list(value), sort_keys=True, default=str)
-            if hasattr(value, "model_dump"):
-                return json.dumps(value.model_dump(), sort_keys=True, default=str)
-            if hasattr(value, "dict"):
-                return json.dumps(value.dict(), sort_keys=True, default=str)
-            return str(value)
-
-        def _row_fingerprint(row: dict[str, Any]) -> str:
-            parts = []
-            for k in sorted(row.keys()):
-                if k in self.input_fields:
-                    parts.append(f"{k}={_canonicalize(row[k])}")
-            return "|".join(parts)
-
         def _is_duplicate(row: dict[str, Any]) -> bool:
-            fp = _row_fingerprint(row)
-            return any(_row_fingerprint(e) == fp for e in all_existing)
+            return self._row_fingerprint(row, self.input_fields) in existing_fingerprints
 
         def _covered_themes_str() -> str:
             parts = []
@@ -647,6 +743,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
+        request_row_cap = 40
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_inputs) < n:
@@ -654,8 +751,8 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self.config.chunk_size,
-                    (n - len(all_inputs) + 9) // 10,
+                    self.config.num_threads,
+                    (n - len(all_inputs) + request_row_cap - 1) // request_row_cap,
                 )
 
                 recent_json = json.dumps(recent_window, default=str)
@@ -664,7 +761,7 @@ class AutoData:
                 tasks = []
                 for _ in range(chunk_batches):
                     remaining = n - len(all_inputs)
-                    batch_size = min(10, remaining)
+                    batch_size = min(request_row_cap, remaining)
                     example = dspy.Example(
                         task_description=description,
                         input_field_spec=input_spec,
@@ -718,6 +815,9 @@ class AutoData:
 
                             all_inputs.append(clean_row)
                             all_existing.append(clean_row)
+                            existing_fingerprints.add(
+                                self._row_fingerprint(clean_row, self.input_fields)
+                            )
                             recent_window.append(clean_row)
                             if len(recent_window) > 20:
                                 recent_window = recent_window[-20:]
@@ -742,6 +842,158 @@ class AutoData:
 
         return all_inputs[:n]
 
+    def _generate_targeted_inputs(
+        self,
+        n: int,
+        output_combos: list[dict[str, str]],
+        seed_examples: list[dict[str, Any]] | None,
+        description: str,
+        progress: tqdm | None = None,
+    ) -> list[dict[str, Any]]:
+        """Generate inputs targeted to specific output combos.
+
+        For each output combo, generates ``n // len(output_combos)`` inputs
+        that would naturally produce that combo.  Returns complete rows
+        (inputs + outputs) with perfectly balanced output distribution.
+        """
+        import math
+
+        predictor = dspy.Predict(_TargetedInputGenerationSignature)
+        metadata = self._ensure_metadata(seed_examples)
+        input_spec = self._field_spec_json(self.input_fields, metadata)
+        validator = _build_validator(self.input_fields, metadata)
+        max_retries = self.config.max_retries
+
+        per_combo = max(1, math.ceil(n / len(output_combos)))
+        all_rows: list[dict[str, Any]] = []
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        # Process all combos in parallel: one batch per combo per round
+        with dspy.settings.context(lm=self.data_lm):
+            combo_states: list[dict[str, Any]] = []
+            for combo in output_combos:
+                combo_needed = min(per_combo, n - len(all_rows))
+                combo_states.append({
+                    "combo": combo,
+                    "target_json": json.dumps(combo, default=str),
+                    "needed": combo_needed,
+                    "rows": [],
+                    "recent_window": [],
+                    "covered_values": {f: set() for f in self.input_fields},
+                    "consecutive_failures": 0,
+                })
+
+            predictor = dspy.Predict(_TargetedInputGenerationSignature)
+            max_total_attempts = max(max_retries * 5, per_combo)
+
+            while any(s["needed"] > len(s["rows"]) for s in combo_states):
+                active = [s for s in combo_states if s["needed"] > len(s["rows"])]
+                if not active:
+                    break
+
+                tasks = []
+                task_combo_indices: list[int] = []
+                for ci, state in enumerate(active):
+                    if state["consecutive_failures"] >= max_total_attempts:
+                        continue
+                    remaining = state["needed"] - len(state["rows"])
+                    batch_size = min(20, remaining)
+                    recent_json = json.dumps(state["recent_window"][-20:], default=str)
+                    parts = []
+                    for f, vals in state["covered_values"].items():
+                        if vals:
+                            parts.append(f"{f}: {', '.join(sorted(vals))}")
+                    themes_str = "; ".join(parts)
+
+                    example = dspy.Example(
+                        task_description=description,
+                        input_field_spec=input_spec,
+                        target_output=state["target_json"],
+                        recent_inputs_json=recent_json,
+                        covered_themes=themes_str,
+                        n_to_generate=batch_size,
+                    ).with_inputs(
+                        "task_description",
+                        "input_field_spec",
+                        "target_output",
+                        "recent_inputs_json",
+                        "covered_themes",
+                        "n_to_generate",
+                    )
+                    tasks.append((predictor, example))
+                    task_combo_indices.append(ci)
+
+                if not tasks:
+                    break
+
+                exec_results = parallel(tasks)
+                if isinstance(exec_results, tuple):
+                    exec_results = exec_results[0]
+
+                for ti, result in enumerate(exec_results):
+                    ci = task_combo_indices[ti]
+                    state = active[ci]
+                    if isinstance(result, Exception):
+                        state["consecutive_failures"] += 1
+                        continue
+
+                    generated = result if isinstance(result, list) else [result]
+                    accepted = 0
+                    for item in generated:
+                        if isinstance(item, dspy.Prediction):
+                            try:
+                                parsed = json.loads(
+                                    _extract_json(item.generated_inputs)
+                                )
+                                if not isinstance(parsed, list):
+                                    parsed = [parsed]
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                continue
+                        elif isinstance(item, dict):
+                            parsed = [item]
+                        else:
+                            continue
+
+                        for row in parsed:
+                            if not isinstance(row, dict):
+                                continue
+                            clean_row, errs = _validate_and_sanitize_row(
+                                row, self.input_fields, metadata
+                            )
+                            if errs:
+                                continue
+                            val_result = validator.validate(clean_row)
+                            if not val_result.is_valid:
+                                continue
+
+                            complete_row = {**clean_row, **state["combo"]}
+                            state["rows"].append(complete_row)
+                            state["recent_window"].append(clean_row)
+                            for f in self.input_fields:
+                                val = clean_row.get(f)
+                                if isinstance(val, str) and val.strip():
+                                    state["covered_values"][f].add(val.strip().lower())
+                            accepted += 1
+                            if progress is not None:
+                                progress.update(1)
+                            if len(state["rows"]) >= state["needed"]:
+                                break
+
+                    if accepted == 0:
+                        state["consecutive_failures"] += 1
+                    else:
+                        state["consecutive_failures"] = 0
+
+            for state in combo_states:
+                all_rows.extend(state["rows"])
+
+        return all_rows[:n]
+
     def _generate_outputs(
         self,
         inputs: list[dict[str, Any]],
@@ -749,6 +1001,8 @@ class AutoData:
         writer: StreamingDatasetWriter | None = None,
         progress: tqdm | None = None,
     ) -> tuple[list[dict[str, Any] | None], list[float] | None]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         metadata = self._ensure_metadata()
         output_model = _build_output_model(metadata, self.output_fields)
         batch_sig = _build_batch_output_signature(output_model)
@@ -757,7 +1011,10 @@ class AutoData:
         output_spec = self._field_spec_json(self.output_fields, metadata)
         validator = _build_validator(self.output_fields, metadata, include_enum=False)
         max_retries = self.config.max_retries
-        batch_size = min(10, self.config.chunk_size * 2)
+        max_inflight = self.config.max_inflight_requests
+        if max_inflight is None:
+            max_inflight = self.config.num_threads
+        batch_size = min(24, max(10, self.config.chunk_size * 2))
 
         judge = None
         if self.config.judge_enabled:
@@ -765,7 +1022,6 @@ class AutoData:
             judge = LLMJudge(lm=judge_lm)
 
         output_map: dict[int, tuple[dict[str, Any], float | None]] = {}
-        written_indices: set[int] = set()
         pending_indices = list(range(len(inputs)))
 
         def _to_dict(raw: Any) -> dict[str, Any] | None:
@@ -781,11 +1037,12 @@ class AutoData:
                     return result
             return None
 
-        def _validate_and_accept(
-            inp: dict[str, Any], raw_output: Any, idx: int
-        ) -> bool:
+        def _validate_output(
+            inp: dict[str, Any], raw_output: Any
+        ) -> dict[str, Any] | None:
+            """Validate a single raw output and return clean_output or None."""
             if isinstance(raw_output, Exception):
-                return False
+                return None
             items = raw_output if isinstance(raw_output, list) else [raw_output]
             for item in items:
                 parsed = _to_dict(item)
@@ -814,75 +1071,182 @@ class AutoData:
                 val_result = validator.validate(clean_output)
                 if not val_result.is_valid:
                     continue
-                score = None
-                if judge is not None:
-                    full_row = {**inp, **clean_output}
-                    score = judge.score(full_row, task_description=description).score
-                output_map[idx] = (clean_output, score)
-                if idx not in written_indices:
-                    if writer is not None:
-                        writer.write_row({**inp, **clean_output})
-                    written_indices.add(idx)
-                return True
-            return False
+                return clean_output
+            return None
+
+        parallel = dspy.Parallel(
+            num_threads=self.config.num_threads,
+            return_failed_examples=True,
+            max_errors=self.config.num_threads * 3,
+        )
+
+        max_total_attempts = max(max_retries * 5, len(inputs))
+        consecutive_failures = 0
 
         with dspy.settings.context(lm=self.data_lm):
-            for attempt in range(max_retries * 3):
-                if not pending_indices:
+            while pending_indices:
+                if consecutive_failures >= max_total_attempts:
                     break
 
-                batch_indices = pending_indices[:batch_size]
-                batch_inputs = [inputs[i] for i in batch_indices]
-                inputs_json = json.dumps(batch_inputs, default=str)
+                # Split pending into batches for parallel execution
+                chunk_batches = min(
+                    max_inflight,
+                    (len(pending_indices) + batch_size - 1) // batch_size,
+                )
 
-                try:
-                    result = batch_predictor(
+                tasks = []
+                batch_starts: list[list[int]] = []
+                for chunk_idx in range(chunk_batches):
+                    start = chunk_idx * batch_size
+                    end = min(start + batch_size, len(pending_indices))
+                    if start >= len(pending_indices):
+                        break
+                    batch_indices = pending_indices[start:end]
+                    batch_starts.append(batch_indices)
+                    batch_inputs = [inputs[i] for i in batch_indices]
+                    inputs_json = json.dumps(batch_inputs, default=str)
+                    example = dspy.Example(
                         task_description=description,
                         inputs_json=inputs_json,
                         n_to_generate=len(batch_indices),
+                    ).with_inputs(
+                        "task_description",
+                        "inputs_json",
+                        "n_to_generate",
                     )
-                    raw_outputs = result.generated_outputs
-                    if not isinstance(raw_outputs, list):
-                        raw_outputs = [raw_outputs]
-                except Exception as exc:
-                    tqdm.write(
-                        f"  [warn] batch output generation failed: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                    raw_outputs = []
+                    tasks.append((batch_predictor, example))
 
-                still_pending = []
-                for i, idx in enumerate(batch_indices):
-                    inp = inputs[idx]
-                    if i < len(raw_outputs):
-                        if _validate_and_accept(inp, raw_outputs[i], idx):
-                            continue
-                    still_pending.append(idx)
+                exec_results = parallel(tasks)
+                # dspy.Parallel with return_failed_examples=True returns
+                # (results, failed_examples, exceptions) tuple.
+                if isinstance(exec_results, tuple):
+                    exec_results = exec_results[0]
 
-                for idx in still_pending:
-                    inp = inputs[idx]
-                    try:
-                        single_result = single_predictor(
+                # Process all results: validate outputs
+                validated: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+                failed_indices: list[int] = []
+
+                for chunk_i, result in enumerate(exec_results):
+                    if chunk_i >= len(batch_starts):
+                        break
+                    batch_indices = batch_starts[chunk_i]
+                    if isinstance(result, Exception):
+                        failed_indices.extend(batch_indices)
+                        continue
+                    if isinstance(result, dspy.Prediction):
+                        raw_outputs = result.generated_outputs
+                        if not isinstance(raw_outputs, list):
+                            raw_outputs = [raw_outputs]
+                    elif isinstance(result, list):
+                        raw_outputs = result
+                    else:
+                        raw_outputs = [result]
+                    for i, idx in enumerate(batch_indices):
+                        inp = inputs[idx]
+                        raw = raw_outputs[i] if i < len(raw_outputs) else None
+                        clean_output = _validate_output(inp, raw) if raw is not None else None
+                        if clean_output is not None:
+                            validated.append((idx, inp, clean_output))
+                        else:
+                            failed_indices.append(idx)
+
+                # Fallback: try single generation for failed indices
+                if failed_indices:
+                    single_tasks = []
+                    for idx in failed_indices:
+                        inp = inputs[idx]
+                        single_input = json.dumps(inp, default=str)
+                        example = dspy.Example(
                             task_description=description,
-                            input_data=json.dumps(inp, default=str),
+                            input_data=single_input,
                             output_field_spec=output_spec,
+                        ).with_inputs(
+                            "task_description",
+                            "input_data",
+                            "output_field_spec",
                         )
-                        _validate_and_accept(inp, single_result, idx)
-                    except Exception as exc:
-                        tqdm.write(
-                            f"  [warn] single output generation failed for "
-                            f"row {idx}: {type(exc).__name__}: {exc}"
-                        )
+                        single_tasks.append((single_predictor, example))
 
-                accepted = (
-                    len(batch_indices)
-                    - len(still_pending)
-                    + sum(1 for idx in still_pending if idx in output_map)
-                )
+                    single_results = parallel(single_tasks)
+                    if isinstance(single_results, tuple):
+                        single_results = single_results[0]
+                    validated_set = {v[0] for v in validated}
+                    for i, result in enumerate(single_results):
+                        if i >= len(failed_indices):
+                            break
+                        idx = failed_indices[i]
+                        if idx in validated_set:
+                            continue
+                        if isinstance(result, Exception):
+                            continue
+                        inp = inputs[idx]
+                        clean_output = _validate_output(inp, result)
+                        if clean_output is not None:
+                            validated.append((idx, inp, clean_output))
+
+                # Score validated rows using moderate batching (10 per LLM call)
+                if judge is not None and validated:
+                    judge_batch_size = 5
+                    all_validated = [
+                        (idx, inp, co) for idx, inp, co in validated
+                    ]
+
+                    def _score_batch(
+                        batch: list[tuple[int, dict[str, Any], dict[str, Any]]],
+                    ) -> list[tuple[int, float | None]]:
+                        rows = [{**inp, **co} for _, inp, co in batch]
+                        scores = judge.batch_score(rows, task_description=description)
+                        return [
+                            (batch[i][0], scores[i].score)
+                            for i in range(len(batch))
+                        ]
+
+                    batches = [
+                        all_validated[i : i + judge_batch_size]
+                        for i in range(0, len(all_validated), judge_batch_size)
+                    ]
+
+                    with ThreadPoolExecutor(
+                        max_workers=self.config.num_threads
+                    ) as pool:
+                        futures = [pool.submit(_score_batch, b) for b in batches]
+                        for future in as_completed(futures):
+                            try:
+                                for idx, score in future.result():
+                                    inp = inputs[idx]
+                                    co = next(
+                                        c for i, _, c in validated if i == idx
+                                    )
+                                    output_map[idx] = (co, score)
+                            except Exception:
+                                pass
+                    # Fallback: set score=None for any validated rows not yet in output_map
+                    for idx, inp, co in validated:
+                        if idx not in output_map:
+                            output_map[idx] = (co, None)
+                else:
+                    for idx, inp, clean_output in validated:
+                        output_map[idx] = (clean_output, None)
+
+                # Write all validated rows and update progress
+                rows_to_write = [
+                    {**inp, **co} for _, inp, co in validated
+                ]
+                if writer is not None and rows_to_write:
+                    writer.write_rows(rows_to_write)
+
                 if progress is not None:
-                    progress.update(accepted)
+                    progress.update(len(validated))
 
-                pending_indices = [i for i in pending_indices if i not in output_map]
+                accepted_this_chunk = len(validated)
+                if accepted_this_chunk == 0:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
+
+                pending_indices = [
+                    i for i in pending_indices if i not in output_map
+                ]
 
         all_outputs: list[dict[str, Any] | None] = []
         all_scores: list[float] = []
@@ -926,6 +1290,7 @@ class AutoData:
         all_rows: list[dict[str, Any]] = []
         all_scores: list[float] = []
         all_existing: list[dict[str, Any]] = list(seed_examples or [])
+        existing_fingerprints = self._fingerprint_set(all_existing, all_fields)
         recent_window: list[dict[str, Any]] = list(seed_examples or [])[-20:]
         covered_values: dict[str, set[str]] = {f: set() for f in all_fields}
         for row in all_existing:
@@ -934,33 +1299,8 @@ class AutoData:
                 if isinstance(val, str) and val.strip():
                     covered_values[f].add(val.strip().lower())
 
-        def _canonicalize(value: Any) -> str:
-            if value is None:
-                return "__none__"
-            if isinstance(value, str):
-                return sanitize_string(value).lower()
-            if isinstance(value, (int, float, bool)):
-                return str(value)
-            if isinstance(value, dict):
-                return json.dumps(value, sort_keys=True, default=str)
-            if isinstance(value, (list, tuple)):
-                return json.dumps(list(value), sort_keys=True, default=str)
-            if hasattr(value, "model_dump"):
-                return json.dumps(value.model_dump(), sort_keys=True, default=str)
-            if hasattr(value, "dict"):
-                return json.dumps(value.dict(), sort_keys=True, default=str)
-            return str(value)
-
-        def _row_fingerprint(row: dict[str, Any]) -> str:
-            parts = []
-            for k in sorted(row.keys()):
-                if k in all_fields:
-                    parts.append(f"{k}={_canonicalize(row[k])}")
-            return "|".join(parts)
-
         def _is_duplicate(row: dict[str, Any]) -> bool:
-            fp = _row_fingerprint(row)
-            return any(_row_fingerprint(e) == fp for e in all_existing)
+            return self._row_fingerprint(row, all_fields) in existing_fingerprints
 
         def _covered_themes_str() -> str:
             parts = []
@@ -977,6 +1317,7 @@ class AutoData:
 
         max_total_attempts = max(max_retries * 5, n)
         consecutive_failures = 0
+        request_row_cap = 40
 
         with dspy.settings.context(lm=self.data_lm):
             while len(all_rows) < n:
@@ -984,8 +1325,8 @@ class AutoData:
                     break
 
                 chunk_batches = min(
-                    self.config.chunk_size,
-                    (n - len(all_rows) + 9) // 10,
+                    self.config.num_threads,
+                    (n - len(all_rows) + request_row_cap - 1) // request_row_cap,
                 )
 
                 recent_json = json.dumps(recent_window, default=str)
@@ -994,7 +1335,7 @@ class AutoData:
                 tasks = []
                 for _ in range(chunk_batches):
                     remaining = n - len(all_rows)
-                    batch_size = min(10, remaining)
+                    batch_size = min(request_row_cap, remaining)
                     example = dspy.Example(
                         task_description=description,
                         field_spec=field_spec,
@@ -1032,6 +1373,9 @@ class AutoData:
                         else:
                             continue
 
+                        # Collect validated rows for batch scoring
+                        rows_to_write: list[dict[str, Any]] = []
+                        validated_rows: list[dict[str, Any]] = []
                         for row in parsed:
                             if not isinstance(row, dict):
                                 continue
@@ -1045,16 +1389,25 @@ class AutoData:
                                 continue
                             if _is_duplicate(clean_row):
                                 continue
+                            validated_rows.append(clean_row)
 
-                            score = None
-                            if judge is not None:
-                                score = judge.score(
-                                    clean_row, task_description=description
-                                ).score
+                        # Batch score all validated rows in one LLM call
+                        if judge is not None and validated_rows:
+                            scores = judge.batch_score(
+                                validated_rows, task_description=description
+                            )
+                        else:
+                            scores = None
+
+                        for i, clean_row in enumerate(validated_rows):
+                            score = scores[i].score if scores is not None else None
 
                             all_rows.append(clean_row)
                             all_scores.append(score or 0.0)
                             all_existing.append(clean_row)
+                            existing_fingerprints.add(
+                                self._row_fingerprint(clean_row, all_fields)
+                            )
                             recent_window.append(clean_row)
                             if len(recent_window) > 20:
                                 recent_window = recent_window[-20:]
@@ -1063,15 +1416,16 @@ class AutoData:
                                 if isinstance(val, str) and val.strip():
                                     covered_values[f].add(val.strip().lower())
 
-                            if writer is not None:
-                                writer.write_row(clean_row)
-
+                            rows_to_write.append(clean_row)
                             accepted_this_chunk += 1
                             consecutive_failures = 0
                             if progress is not None:
                                 progress.update(1)
                             if len(all_rows) >= n:
                                 break
+
+                        if writer is not None and rows_to_write:
+                            writer.write_rows(rows_to_write)
                         if len(all_rows) >= n:
                             break
                     if len(all_rows) >= n:
@@ -1181,47 +1535,45 @@ class AutoData:
                         f"Balancing outputs across {len(output_combos)} target combos"
                     )
 
-            pool_n = n
             if output_combos is not None:
-                pool_n = int(n * self.config.oversample_factor)
-                tqdm.write(f"Oversampling: generating {pool_n} rows for balance pool")
-
-            input_bar = tqdm(
-                total=pool_n, desc="Generating inputs", unit="row", leave=True
-            )
-            inputs = self._generate_inputs(
-                pool_n, resolved_seeds, description, input_bar
-            )
-            input_bar.close()
-
-            output_bar = tqdm(
-                total=len(inputs), desc="Generating outputs", unit="row", leave=True
-            )
-            outputs, quality_scores = self._generate_outputs(
-                inputs, description, writer=writer, progress=output_bar
-            )
-            output_bar.close()
-
-            complete_rows = []
-            row_scores: list[float] = []
-            for i, (inp, out) in enumerate(zip(inputs, outputs)):
-                if out is not None:
-                    complete_rows.append({**inp, **out})
-                    if quality_scores is not None and i < len(quality_scores):
-                        row_scores.append(quality_scores[i])
-
-            if (
-                self.config.balance_outputs
-                and output_combos is not None
-                and len(complete_rows) > n
-            ):
-                complete_rows, row_scores = self._subsample_balanced(
-                    complete_rows, n, row_scores
+                # Targeted generation: generate inputs backwards from target
+                # outputs.  This guarantees balanced distribution and skips
+                # the output generation step entirely.
+                target_bar = tqdm(
+                    total=n, desc="Generating targeted rows", unit="row", leave=True
                 )
-                tqdm.write(f"Rewriting {len(complete_rows)} balanced rows to disk")
+                complete_rows = self._generate_targeted_inputs(
+                    n, output_combos, resolved_seeds, description, target_bar
+                )
+                target_bar.close()
+                row_scores = []
                 writer.truncate()
-                for row in complete_rows:
-                    writer.write_row(row)
+                writer.write_rows(complete_rows)
+            else:
+                # Standard flow: generate inputs then outputs
+                input_bar = tqdm(
+                    total=n, desc="Generating inputs", unit="row", leave=True
+                )
+                inputs = self._generate_inputs(
+                    n, resolved_seeds, description, input_bar
+                )
+                input_bar.close()
+
+                output_bar = tqdm(
+                    total=len(inputs), desc="Generating outputs", unit="row", leave=True
+                )
+                outputs, quality_scores = self._generate_outputs(
+                    inputs, description, writer=writer, progress=output_bar
+                )
+                output_bar.close()
+
+                complete_rows = []
+                row_scores: list[float] = []
+                for i, (inp, out) in enumerate(zip(inputs, outputs)):
+                    if out is not None:
+                        complete_rows.append({**inp, **out})
+                        if quality_scores is not None and i < len(quality_scores):
+                            row_scores.append(quality_scores[i])
 
         n_written = writer.row_count()
         elapsed = time.time() - start_time
@@ -1290,16 +1642,27 @@ class AutoData:
         for _ in range(min(n, len(pool))):
             best_idx = -1
             best_score = -1.0
-            for i, (row, _) in enumerate(pool):
+            best_quality = float("-inf")
+            for i, (row, row_quality) in enumerate(pool):
+                # Compute a normalized deficit score: for each categorical
+                # field, how under-represented is this row's value?  We sum
+                # the fractional deficits (deficit / target) so fields with
+                # different target counts contribute equally.
                 score = 0.0
                 for fname in categorical_fields:
                     val = row.get(fname)
                     if isinstance(val, str):
                         val_lower = val.strip().lower()
-                        deficit = target_per_value[fname] - counts[fname][val_lower]
-                        score += max(0.0, deficit)
-                if score > best_score:
+                        current = counts[fname][val_lower]
+                        target = target_per_value[fname]
+                        if target > 0:
+                            deficit = target - current
+                            score += max(0.0, deficit) / target
+                if score > best_score or (
+                    score == best_score and row_quality > best_quality
+                ):
                     best_score = score
+                    best_quality = row_quality
                     best_idx = i
             if best_idx == -1:
                 break

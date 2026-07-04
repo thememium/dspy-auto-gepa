@@ -60,6 +60,7 @@ known_first_party = ["dspy_auto_gepa"]
 per_rule_ignores = { DEP002 = ["pandas", "pyarrow"] }
 
 [tool.poe.tasks]
+example-full = "uv run examples/auto_combined.py"
 example-data-split = "uv run examples/data_split.py"
 example-data-signature = "uv run examples/data_signature.py"
 example-basic = "uv run examples/basic.py"
