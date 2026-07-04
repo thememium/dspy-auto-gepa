@@ -400,7 +400,7 @@ class _TargetedInputGenerationSignature(dspy.Signature):
     target_output: str = dspy.InputField(
         desc=(
             "The desired output values that the generated inputs should "
-            "naturally produce. Example: {\"urgency\": \"high\", \"sentiment\": \"negative\"}"
+            'naturally produce. Example: {"urgency": "high", "sentiment": "negative"}'
         )
     )
     recent_inputs_json: str = dspy.InputField(
@@ -705,7 +705,9 @@ class AutoData:
                     covered_values[f].add(val.strip().lower())
 
         def _is_duplicate(row: dict[str, Any]) -> bool:
-            return self._row_fingerprint(row, self.input_fields) in existing_fingerprints
+            return (
+                self._row_fingerprint(row, self.input_fields) in existing_fingerprints
+            )
 
         def _covered_themes_str() -> str:
             parts = []
@@ -878,15 +880,17 @@ class AutoData:
             combo_states: list[dict[str, Any]] = []
             for combo in output_combos:
                 combo_needed = min(per_combo, n - len(all_rows))
-                combo_states.append({
-                    "combo": combo,
-                    "target_json": json.dumps(combo, default=str),
-                    "needed": combo_needed,
-                    "rows": [],
-                    "recent_window": [],
-                    "covered_values": {f: set() for f in self.input_fields},
-                    "consecutive_failures": 0,
-                })
+                combo_states.append(
+                    {
+                        "combo": combo,
+                        "target_json": json.dumps(combo, default=str),
+                        "needed": combo_needed,
+                        "rows": [],
+                        "recent_window": [],
+                        "covered_values": {f: set() for f in self.input_fields},
+                        "consecutive_failures": 0,
+                    }
+                )
 
             predictor = dspy.Predict(_TargetedInputGenerationSignature)
             max_total_attempts = max(max_retries * 5, per_combo)
@@ -1144,7 +1148,9 @@ class AutoData:
                     for i, idx in enumerate(batch_indices):
                         inp = inputs[idx]
                         raw = raw_outputs[i] if i < len(raw_outputs) else None
-                        clean_output = _validate_output(inp, raw) if raw is not None else None
+                        clean_output = (
+                            _validate_output(inp, raw) if raw is not None else None
+                        )
                         if clean_output is not None:
                             validated.append((idx, inp, clean_output))
                         else:
@@ -1187,9 +1193,7 @@ class AutoData:
                 # Score validated rows using moderate batching (10 per LLM call)
                 if judge is not None and validated:
                     judge_batch_size = 5
-                    all_validated = [
-                        (idx, inp, co) for idx, inp, co in validated
-                    ]
+                    all_validated = [(idx, inp, co) for idx, inp, co in validated]
 
                     def _score_batch(
                         batch: list[tuple[int, dict[str, Any], dict[str, Any]]],
@@ -1197,8 +1201,7 @@ class AutoData:
                         rows = [{**inp, **co} for _, inp, co in batch]
                         scores = judge.batch_score(rows, task_description=description)
                         return [
-                            (batch[i][0], scores[i].score)
-                            for i in range(len(batch))
+                            (batch[i][0], scores[i].score) for i in range(len(batch))
                         ]
 
                     batches = [
@@ -1214,9 +1217,7 @@ class AutoData:
                             try:
                                 for idx, score in future.result():
                                     inp = inputs[idx]
-                                    co = next(
-                                        c for i, _, c in validated if i == idx
-                                    )
+                                    co = next(c for i, _, c in validated if i == idx)
                                     output_map[idx] = (co, score)
                             except Exception:
                                 pass
@@ -1229,9 +1230,7 @@ class AutoData:
                         output_map[idx] = (clean_output, None)
 
                 # Write all validated rows and update progress
-                rows_to_write = [
-                    {**inp, **co} for _, inp, co in validated
-                ]
+                rows_to_write = [{**inp, **co} for _, inp, co in validated]
                 if writer is not None and rows_to_write:
                     writer.write_rows(rows_to_write)
 
@@ -1244,9 +1243,7 @@ class AutoData:
                 else:
                     consecutive_failures = 0
 
-                pending_indices = [
-                    i for i in pending_indices if i not in output_map
-                ]
+                pending_indices = [i for i in pending_indices if i not in output_map]
 
         all_outputs: list[dict[str, Any] | None] = []
         all_scores: list[float] = []

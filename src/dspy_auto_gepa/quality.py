@@ -157,15 +157,13 @@ class _BatchJudgeSignature(dspy.Signature):
     in the SAME ORDER.
     """
 
-    rows_json: str = dspy.InputField(
-        desc="JSON array of row objects to score"
-    )
+    rows_json: str = dspy.InputField(desc="JSON array of row objects to score")
     rubric: str = dspy.InputField(desc="Comma-separated list of scoring dimensions")
     task_description: str = dspy.InputField(desc="Optional task context", default="")
     results_json: str = dspy.OutputField(
         desc=(
             'JSON array of {"scores": {dim: float}, "feedback": str} objects, '
-            'one per input row, in the same order.'
+            "one per input row, in the same order."
         )
     )
 
@@ -264,7 +262,9 @@ class LLMJudge:
                 parsed = [parsed]
         except (json.JSONDecodeError, ValueError, TypeError):
             return [
-                JudgeResult(score=0.0, feedback="Failed to parse judge output", scores={})
+                JudgeResult(
+                    score=0.0, feedback="Failed to parse judge output", scores={}
+                )
                 for _ in rows
             ]
 
@@ -286,7 +286,9 @@ class LLMJudge:
                 except (ValueError, TypeError, AttributeError):
                     pass
             results.append(
-                JudgeResult(score=0.0, feedback="Failed to parse judge entry", scores={})
+                JudgeResult(
+                    score=0.0, feedback="Failed to parse judge entry", scores={}
+                )
             )
         return results
 

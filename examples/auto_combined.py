@@ -92,6 +92,7 @@ def main() -> None:
     review = input("\nReview the generated data? (y/N): ")
     if review.strip().lower() == "y":
         print(f"\n--- {config.output_path} ---")
+        assert config.output_path is not None
         print(Path(config.output_path).read_text())
         print("--- End of data ---\n")
 
