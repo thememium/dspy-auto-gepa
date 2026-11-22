@@ -716,27 +716,6 @@ class AutoData:
                     parts.append(f"{f}: {', '.join(sorted(vals))}")
             return "; ".join(parts)
 
-        def _generate_one_batch(
-            recent_json: str, themes_str: str, batch_size: int
-        ) -> list[dict[str, Any]]:
-            for _attempt in range(max_retries):
-                try:
-                    with dspy.settings.context(lm=self.data_lm):
-                        result = predictor(
-                            task_description=description,
-                            input_field_spec=input_spec,
-                            recent_inputs_json=recent_json,
-                            covered_themes=themes_str,
-                            n_to_generate=batch_size,
-                        )
-                    parsed = json.loads(_extract_json(result.generated_inputs))
-                    if not isinstance(parsed, list):
-                        parsed = [parsed]
-                    return [r for r in parsed if isinstance(r, dict)]
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    continue
-            return []
-
         parallel = dspy.Parallel(
             num_threads=self.config.num_threads,
             return_failed_examples=True,
@@ -897,8 +876,6 @@ class AutoData:
 
             while any(s["needed"] > len(s["rows"]) for s in combo_states):
                 active = [s for s in combo_states if s["needed"] > len(s["rows"])]
-                if not active:
-                    break
 
                 tasks = []
                 task_combo_indices: list[int] = []
@@ -1103,8 +1080,6 @@ class AutoData:
                 for chunk_idx in range(chunk_batches):
                     start = chunk_idx * batch_size
                     end = min(start + batch_size, len(pending_indices))
-                    if start >= len(pending_indices):
-                        break
                     batch_indices = pending_indices[start:end]
                     batch_starts.append(batch_indices)
                     batch_inputs = [inputs[i] for i in batch_indices]
@@ -1176,13 +1151,10 @@ class AutoData:
                     single_results = parallel(single_tasks)
                     if isinstance(single_results, tuple):
                         single_results = single_results[0]
-                    validated_set = {v[0] for v in validated}
                     for i, result in enumerate(single_results):
                         if i >= len(failed_indices):
                             break
                         idx = failed_indices[i]
-                        if idx in validated_set:
-                            continue
                         if isinstance(result, Exception):
                             continue
                         inp = inputs[idx]
@@ -1661,8 +1633,6 @@ class AutoData:
                     best_score = score
                     best_quality = row_quality
                     best_idx = i
-            if best_idx == -1:
-                break
             row, sc = pool.pop(best_idx)
             selected.append((row, sc))
             for fname in categorical_fields:
