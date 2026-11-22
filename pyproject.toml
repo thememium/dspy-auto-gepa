@@ -60,6 +60,9 @@ filterwarnings = ["ignore:.*prefix.*:DeprecationWarning:dspy.*"]
 known_first_party = ["dspy_auto_gepa"]
 per_rule_ignores = { DEP002 = ["pandas", "pyarrow"] }
 
+[tool.coverage.report]
+fail_under = 100
+
 [tool.poe.tasks]
 example-full = "uv run examples/auto_combined.py"
 example-data-split = "uv run examples/data_split.py"
@@ -67,9 +70,12 @@ example-data-signature = "uv run examples/data_signature.py"
 example-basic = "uv run examples/basic.py"
 clean-full = "sh -c 'uv run isort . && uv run ruff check . --fix && uv run ruff format . && uv run deptry . && uv run ty check'"
 clean = "sh -c 'uv run isort . && uv run ruff format .'"
-test = "uv run pytest tests/ -v"
-test-cov = "uv run pytest tests/ -v --cov=dspy_auto_gepa --cov-report=term-missing"
-test-e2e = "uv run pytest tests/ -v --run-e2e"
+# xdist `-n auto` pins every core at 100%, which ramps the fans on long runs.
+# PYTEST_XDIST_AUTO_NUM_WORKERS caps `auto` at half the online CPUs; override
+# per run, e.g. PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe test.
+test = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v $@' --"
+test-cov = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v --cov=dspy_auto_gepa --cov-report=term-missing $@' --"
+test-e2e = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v --run-e2e $@' --"
 sort = "uv run isort ."
 lint = "uv run ruff check ."
 format = "uv run ruff format ."
