@@ -47,9 +47,10 @@ dev = [
   "poethepoet>=0.46.0",
   "pytest>=9.0.3",
   "pytest-cov>=7.1.0",
+  "pytest-xdist[psutil]>=3.8.0",
   "ruff>=0.15.13",
   "ty>=0.0.38",
-  "usechange>=0.1.49",
+  "usechange>=0.1.53",
 ]
 
 [tool.pytest.ini_options]
