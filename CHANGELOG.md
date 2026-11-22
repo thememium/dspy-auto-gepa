@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.10 (2026-11-22)
+
+[Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.9...v0.1.10)
+
+### 💅 Refactors
+
+- **generator**: simplify batch generation and validation logic ([f63e330](https://github.com/thememium/dspy-auto-gepa/commit/f63e3300a9fa39dfa8d1ce944b6013d9ee8b7db2))
+
+### 🏡 Chore
+
+- **pyproject**: drop unused test‑e2e script ([bae958c](https://github.com/thememium/dspy-auto-gepa/commit/bae958cf2af3da08999ac92cf942821c3d86bd5b))
+- **pyproject.toml**: enforce 100% coverage and improve test parallelism ([dff0e9d](https://github.com/thememium/dspy-auto-gepa/commit/dff0e9d0c1b038fb658360cd5b4e757a5e8ee6cb))
+- **pyproject.toml**: add pytest-xdist[psutil] and bump usechange ([39935c4](https://github.com/thememium/dspy-auto-gepa/commit/39935c446ccc5db89deb7c742dd29d4360e73a09))
+- **deps**: bump usechange to 0.1.49 ([dad5500](https://github.com/thememium/dspy-auto-gepa/commit/dad55000a19e0d9ea18deb248ef92599d373d608))
+
+### ✅ Tests
+
+- add tests for artifacts, config, data, metrics, quality, runner ([d3fa153](https://github.com/thememium/dspy-auto-gepa/commit/d3fa153049b42d6e2896e2f1e54ae07bac5a3377))
+
+### Contributors
+
+- Edward Boswell <thememium@gmail.com>
+
 ## v0.1.9 (2026-07-04)
 
 [Compare changes](https://github.com/thememium/dspy-auto-gepa/compare/v0.1.8...v0.1.9)
