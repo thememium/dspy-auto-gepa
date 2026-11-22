@@ -75,7 +75,6 @@ clean = "sh -c 'uv run isort . && uv run ruff format .'"
 # per run, e.g. PYTEST_XDIST_AUTO_NUM_WORKERS=4 uv run poe test.
 test = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v $@' --"
 test-cov = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v --cov=dspy_auto_gepa --cov-report=term-missing $@' --"
-test-e2e = "sh -c 'PYTEST_XDIST_AUTO_NUM_WORKERS=$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 )) uv run pytest tests/ -n auto --dist worksteal -v --run-e2e $@' --"
 sort = "uv run isort ."
 lint = "uv run ruff check ."
 format = "uv run ruff format ."
